@@ -316,7 +316,7 @@
       const s = r.sum || {}, prev = prevCredit(r), res = V.r2((s.due || 0) - prev), st = statusOf(r);
       h += '<tr><td><a href="#vat-ret-sum-' + r.id + '">' + esc(A.clientName(r.client)) + '</a>' + (r.kind === 'amended' ? ' <span class="pill warn">معدل</span>' : '') + '</td><td>' + esc(periodLabel(r)) + '</td><td>' + esc(FREQ[r.freq] || '') + '</td>' +
         '<td class="n">' + money(s.sales) + '</td><td class="n">' + money(s.out) + '</td><td class="n">' + money(s.inp) + '</td><td class="n">' + money(prev) + '</td>' +
-        '<td class="n pos">' + (res > 0 ? money(res) : '') + '</td><td class="n neg">' + (res < 0 ? money(-res) : '') + '</td><td>' + pill(st) + (s.crit ? ' <span class="iss crit">' + int(s.crit) + ' ملاحظة</span>' : '') + '</td><td class="num">' + esc(r.sub ? r.sub.formNo || '' : '') + '</td><td class="num">' + esc(r.sub ? r.sub.sentDate || '' : '') + '</td></tr>';
+        '<td class="n pos">' + (res > 0 ? money(res) : '') + '</td><td class="n neg">' + (res < 0 ? money(-res) : '') + '</td><td>' + pill(st) + (s.crit ? ' <span class="iss crit">' + int(s.crit) + ' ملاحظة</span>' : '') + '</td><td class="num">' + (r.sub && r.sub.formNo && r.sub.fileChunks && S.downloads ? '<a href="#" data-act="vat-dl-sub" data-id="' + r.id + '" title="تنزيل الإقرار المقدَّم PDF">' + esc(r.sub.formNo) + ' ⤓</a>' : esc(r.sub ? r.sub.formNo || '' : '')) + '</td><td class="num">' + esc(r.sub ? r.sub.sentDate || '' : '') + '</td></tr>';
     }
     return h + '</tbody></table></div></div></div>';
   }
@@ -857,6 +857,14 @@
     for (let k = 0; k < r.sub.fileChunks; k++) { const snap = await S.db.doc('vatFiles/' + r.id + '-' + k).get(); if (!exists(snap)) throw new Error('ملف الإقرار غير مكتمل. أعد رفعه من تبويب المطابقة.'); b64 += snap.data().data; }
     return fromB64(b64);
   }
+  async function downloadSubmitted(r) {
+    if (!r || !r.sub || !r.sub.fileChunks) return toast('لم يُحفظ ملف لهذا الإقرار. ارفعه من تبويب «المطابقة بعد التقديم».', true);
+    toast('جارٍ تجهيز الملف…');
+    try {
+      const bytes = await loadFile(r);
+      await A.saveFile(r.sub.file || (A.fileName('إقرار ' + A.clientName(r.client) + ' ' + r.period) + '.pdf'), new Blob([bytes], { type: 'application/pdf' }));
+    } catch (e) { toast((e && e.message) || 'تعذّر تنزيل الملف.', true); }
+  }
   async function viewSubmitted(r) {
     if (!r.sub || !r.sub.fileChunks) return toast('لم يُحفظ ملف للإقرار المقدَّم. ارفعه من تبويب «المطابقة بعد التقديم».', true);
     const bg = modal('الإقرار المقدَّم' + (r.sub.formNo ? ' رقم ' + r.sub.formNo : '') + (r.sub.sentDate ? ' · تاريخ التقديم ' + r.sub.sentDate : ''),
@@ -1074,6 +1082,7 @@
       case 'vat-dl': return r ? downloadSheet(r, el.dataset.side, el.dataset.fmt) : null;
       case 'vat-pdf-sum': return r ? pdfSummary(r) : null;
       case 'vat-view-sub': return r ? viewSubmitted(r) : null;
+      case 'vat-dl-sub': return downloadSubmitted(retById(el.dataset.id));
       case 'vat-manual-sub': return r ? openManualSub(r) : null;
       case 'vat-clear-sub': return r ? confirmBox('حذف بيانات التقديم', 'ستُحذف بيانات الإقرار المقدَّم ونتيجة المطابقة، وتبقى الفواتير كما هي.', 'حذف', async () => {
         if (await write(async () => { await deleteFile(r); await S.db.doc('vatReturns/' + r.id).update({ sub: null, status: 'ready' }); })) { closeModal(); toast('تم الحذف'); }
