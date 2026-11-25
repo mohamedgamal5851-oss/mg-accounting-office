@@ -144,7 +144,8 @@
       items.map(([k, label, ic]) => k === 'f41' ? '<a class="soon" aria-disabled="true">' + svgIcon(k) + '<span>' + esc(label) + '</span></a>' :
         '<a href="#' + k + '" class="' + (mod && on(k) ? 'on' : '') + '">' + svgIcon(ic || k) + '<span>' + esc(label) + '</span>' +
         (badge[k] ? '<span class="badge" title="إجراءات متأخرة">' + badge[k] + '</span>' : '') + '</a>').join('');
-    $('#as-of').textContent = 'اليوم: ' + C.todayISO();
+    const build = (document.querySelector('meta[name=of-build]') || {}).content || '';
+    $('#as-of').textContent = 'اليوم: ' + C.todayISO() + (build ? ' · الإصدار ' + build : '');
     $('.logo span').textContent = mod ? mod.name : 'إدارة المكتب';
     $('#logo-name').textContent = settings().officeName || 'مكتب المحاسبة';
     document.title = (settings().officeName || 'مكتب المحاسبة') + ' – إدارة المكتب';
