@@ -126,8 +126,11 @@
     $('#side-foot').innerHTML = '<button type="button" class="pin-btn" id="pin-btn">' + (pinned ? '⇥ إخفاء القائمة' : '📌 تثبيت القائمة') + '</button><span id="as-of"></span>';
     $('#pin-btn').onclick = () => { pinned = !pinned; try { localStorage.setItem('of-pinned', pinned ? '1' : '0'); } catch (e) {} renderShell(); };
     $('#side-scrim').onclick = () => $('#side').classList.remove('open');
-    let hoverOpened = false;
-    $('#side-edge').onmouseenter = () => { if (!pinned) { hoverOpened = true; $('#side').classList.add('open'); } };
+    // the hidden menu opens from the screen edge only when the pointer rests there (0.6 s), not when it passes by
+    let hoverOpened = false, hoverTimer = 0;
+    const edge = $('#side-edge');
+    edge.onmouseenter = () => { if (pinned) return; clearTimeout(hoverTimer); hoverTimer = setTimeout(() => { hoverOpened = true; $('#side').classList.add('open'); }, 600); };
+    edge.onmouseleave = () => clearTimeout(hoverTimer);
     $('#side').onmouseleave = () => { if (!pinned && hoverOpened) { hoverOpened = false; $('#side').classList.remove('open'); } };
   }
   function renderNav() {
