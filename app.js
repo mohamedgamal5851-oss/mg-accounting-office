@@ -105,8 +105,10 @@
     { id: 'tax', name: 'الإقرارات الضريبية', desc: 'إقرارات القيمة المضافة: تحليل فواتير البيع والشراء، ملفات الرفع على المنظومة، ومطابقة الإقرار بعد تقديمه', icon: 'vat', home: 'vat',
       nav: [['vat', 'لوحة الإقرارات'], ['vat-list', 'إقرارات القيمة المضافة'], ['clients', 'بيانات العملاء'], ['backup', 'النسخ الاحتياطي'], ['vat-rep', 'تقارير الإقرارات'], ['vat-parties', 'الموردون والعملاء'], ['f41', 'نموذج 41 (قريبًا)']] }
   ];
+  // on the office's own website (Cloudflare) every person signs in; the account page sits in both menus
+  if (window.OF_CF) for (const m of MODULES) m.nav.push(['users', 'المستخدمون']);
   const NAV = MODULES[0].nav;
-  const SHARED = ['clients', 'client', 'backup'];
+  const SHARED = ['clients', 'client', 'backup', 'users'];
   let lastMod = (() => { try { return sessionStorage.getItem('of-mod') || 'office'; } catch (e) { return 'office'; } })();
   const moduleOf = (page) => page === 'home' ? null : page === 'vat' ? MODULES[1] : SHARED.includes(page) ? (MODULES.find(m => m.id === lastMod) || MODULES[0]) : MODULES[0];
   function noteModule(page) {
@@ -148,7 +150,8 @@
       certs: [L('سجل الشهادات', '#certs'), A('+ شهادة دخل', 'add-cert'), A('+ شهادة رأس مال', 'add-capcert')],
       reports: REPORTS.map(([r, l]) => L(l, '#reports-' + r)),
       backup: [S.downloads ? A('⤓ تنزيل نسخة احتياطية', 'backup') : null, L('استرجاع نسخة احتياطية', '#backup')],
-      setup: [L('الإعدادات', '#setup'), A('+ موظف', 'add-staff')]
+      setup: [L('الإعدادات', '#setup'), A('+ موظف', 'add-staff')],
+      users: [L('حسابي والمستخدمون', '#users'), S.isOwner ? { label: '+ مستخدم جديد', act: 'user-edit', data: {} } : null, { label: 'تسجيل الخروج', act: 'logout', data: {} }]
     };
     const v = window.OFVat && window.OFVat.navMenu ? window.OFVat.navMenu(k, W) : null;
     return (v || M[k] || []).filter(Boolean);
@@ -251,7 +254,7 @@
     document.title = (settings().officeName || 'مكتب المحاسبة') + ' – إدارة المكتب';
   }
 
-  const PAGES = ['home', 'backup', 'dashboard', 'clients', 'client', 'finance', 'tasks', 'vat', 'contracts', 'certs', 'feecalc', 'reports', 'setup'];
+  const PAGES = ['home', 'backup', 'users', 'dashboard', 'clients', 'client', 'finance', 'tasks', 'vat', 'contracts', 'certs', 'feecalc', 'reports', 'setup'];
   function currentPage() {
     // hashes: #page, #page-sub, or #client-<tab>-<client id> (the id may itself contain hyphens)
     const parts = decodeURIComponent((location.hash || '#home').slice(1)).split('-');
@@ -297,6 +300,7 @@
     let h = '';
     if (page === 'home') h = pageHome();
     else if (page === 'backup') h = pageBackup();
+    else if (page === 'users') h = pageUsers();
     else if (page === 'dashboard') h = pageDashboard();
     else if (page === 'clients') h = pageClients();
     else if (page === 'client') h = pageClient(sub, extra || 'statement');
@@ -355,7 +359,7 @@
   function lastBackup() { try { return localStorage.getItem('of-last-backup') || ''; } catch (e) { return ''; } }
   function pageBackup() {
     const local = !!window.OF_LOCAL, last = lastBackup();
-    let h = topBar('النسخ الاحتياطي والاسترجاع', local ? 'هذه النسخة تعمل على هذا الجهاز' : 'هذه النسخة منشورة على claude.ai') + '<div class="content">';
+    let h = topBar('النسخ الاحتياطي والاسترجاع', local ? 'هذه النسخة تعمل على هذا الجهاز' : window.OF_CF ? 'نسخة موقع المكتب على Cloudflare' : 'هذه النسخة منشورة على claude.ai') + '<div class="content">';
     h += '<section class="card"><div class="body">' +
       '<p style="margin:0 0 6px">النسخة الاحتياطية ملف واحد بصيغة JSON يضم جميع البيانات: العملاء، والحركات المالية، والإجراءات، والعقود، والشهادات، وإقرارات القيمة المضافة بفواتيرها وملفات الإقرارات المقدَّمة، وبيانات الدخول مشفرة بكلمة المرور الرئيسية.</p>' +
       '<p style="margin:0;color:var(--muted)">لنقل البيانات بين النسخة المنشورة على claude.ai والنسخة المثبتة على جهاز Mac: نزّل نسخة احتياطية من إحداهما، ثم استرجعها في الأخرى. السجلات التي تحمل المعرّف نفسه تُستبدل، وتبقى بقية البيانات كما هي.</p>' +
@@ -521,7 +525,7 @@
       '</div><header style="border-top:1px solid var(--line)"><h2>المستندات الرسمية</h2></header><div class="tablewrap"><table><thead><tr><th>المستند</th><th>الرقم</th><th>تاريخ الانتهاء</th><th>الحالة</th></tr></thead><tbody>' +
       ((c.docs || []).length ? c.docs.map(d => { const s = docState(d); return '<tr><td>' + esc(d.name) + '</td><td class="num">' + esc(d.number || '') + '</td><td class="num">' + esc(d.expiry || '—') + '</td><td>' + s + '</td></tr>'; }).join('') : '<tr><td colspan="4" class="empty">لا توجد مستندات مسجلة</td></tr>') +
       '</tbody></table></div></section></div>';
-    if (writable()) h += '<div class="toolbar"><span class="grow"></span><button type="button" class="btn danger" data-act="del-client" data-id="' + c.id + '">حذف العميل</button></div>';
+    if (writable() && (!window.OF_CF || S.isOwner)) h += '<div class="toolbar"><span class="grow"></span><button type="button" class="btn danger" data-act="del-client" data-id="' + c.id + '">حذف العميل</button></div>';
     return h;
   }
   function docState(d) {
@@ -2266,6 +2270,62 @@
     });
   }
 
+  /* ---------------- users and own account (office website on Cloudflare only) ---------------- */
+  const ROLE_NAME = { admin: 'مدير البرنامج', staff: 'موظف (إضافة وتعديل)', viewer: 'اطلاع فقط' };
+  const U = { list: null, loading: false, err: '' };
+  function loadUsers() {
+    if (U.loading || !S.isOwner) return; U.loading = true;
+    window.OF_CF.listUsers().then(l => { U.list = l; U.err = ''; }, e => { U.err = e.message; }).finally(() => { U.loading = false; if (currentPage().page === 'users') renderPage(); });
+  }
+  function pageUsers() {
+    if (!window.OF_CF) return topBar('المستخدمون') + '<div class="content"><div class="card"><div class="empty">المستخدمون متاحون في نسخة موقع المكتب فقط.</div></div></div>';
+    const me = window.OF_CF.me() || {};
+    let h = topBar('المستخدمون وحسابي', 'أنت مسجّل باسم ' + esc(me.name || me.username || '') + ' · ' + esc(ROLE_NAME[me.role] || '')) + '<div class="content">';
+    h += '<section class="card"><header><h2>حسابي</h2></header><div class="body"><div class="toolbar">' +
+      '<span>اسم المستخدم: <b dir="ltr">' + esc(me.username || '') + '</b></span><span class="grow"></span>' +
+      '<button type="button" class="btn" data-act="my-pass">تغيير كلمة المرور</button><button type="button" class="btn danger" data-act="logout">تسجيل الخروج</button></div></div></section>';
+    if (S.isOwner) {
+      if (!U.list && !U.err) loadUsers();
+      h += '<section class="card"><header><h2>حسابات الموظفين</h2><span class="grow"></span><button type="button" class="btn primary" data-act="user-edit">+ مستخدم جديد</button></header>';
+      if (U.err) h += '<div class="empty">' + esc(U.err) + '</div>';
+      else if (!U.list) h += '<div class="empty">جارٍ التحميل…</div>';
+      else h += '<div class="table-wrap"><table><thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>الحالة</th><th>آخر دخول</th><th></th></tr></thead><tbody>' +
+        U.list.map(x => '<tr><td>' + esc(x.name) + '</td><td dir="ltr" style="text-align:right">' + esc(x.username) + '</td><td>' + esc(ROLE_NAME[x.role] || x.role) + '</td><td>' + (x.active ? '<span class="pill ok">مفعّل</span>' : '<span class="pill">موقوف</span>') + '</td><td>' + esc((x.lastLogin || '').replace('T', ' ').slice(0, 16) || '—') + '</td>' +
+          '<td style="white-space:nowrap"><button type="button" class="btn sm" data-act="user-edit" data-id="' + esc(x.username) + '">تعديل</button>' + (x.username !== me.username ? ' <button type="button" class="btn sm danger" data-act="user-del" data-id="' + esc(x.username) + '">حذف</button>' : '') + '</td></tr>').join('') + '</tbody></table></div>';
+      h += '<div class="body"><p class="hint" style="margin:0"><b>مدير البرنامج</b>: كل شيء، ومنه إدارة المستخدمين، واسترجاع النسخ الاحتياطية، وحذف العملاء، وخزنة بيانات الدخول. <b>موظف</b>: يضيف ويعدّل العملاء والحركات والإجراءات والإقرارات. <b>اطلاع فقط</b>: يشاهد ويصدّر التقارير دون تعديل.</p></div></section>';
+    }
+    return h + '</div>';
+  }
+  function openUserEdit(username) {
+    const x = username ? (U.list || []).find(u => u.username === username) : null;
+    const body = '<form id="ue-form" class="form">' +
+      fld('ue-name', 'الاسم', inp('ue-name', x ? x.name : '', 'text', ' required')) +
+      fld('ue-user', 'اسم المستخدم (إنجليزي أو أرقام)', inp('ue-user', x ? x.username : '', 'text', ' dir="ltr" autocapitalize="none" autocomplete="off" required pattern="[A-Za-z0-9._\\-]{3,32}"' + (x ? ' readonly' : ''))) +
+      fld('ue-pass', x ? 'كلمة مرور جديدة (اتركها فارغة لعدم التغيير)' : 'كلمة المرور (8 أحرف على الأقل)', inp('ue-pass', '', 'text', ' dir="ltr" autocomplete="new-password"' + (x ? '' : ' required minlength="8"'))) +
+      fld('ue-role', 'الصلاحية', '<select id="ue-role">' + options(Object.entries(ROLE_NAME), x ? x.role : 'staff') + '</select>') +
+      (x ? fld('ue-active', 'الحالة', '<select id="ue-active">' + options([['1', 'مفعّل'], ['0', 'موقوف (لا يستطيع الدخول)']], x.active ? '1' : '0') + '</select>') : '') +
+      '<div class="field full"><div id="ue-err" class="hint" style="color:var(--bad,#b91c1c)"></div></div></form>';
+    const bg = modal(x ? 'تعديل مستخدم' : 'مستخدم جديد', body, '<button type="button" class="btn" data-close>إلغاء</button><button type="submit" form="ue-form" class="btn primary">حفظ</button>');
+    $('#ue-form', bg).addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const pass = $('#ue-pass', bg).value, b = { username: $('#ue-user', bg).value.trim(), name: $('#ue-name', bg).value.trim(), role: $('#ue-role', bg).value, active: x ? $('#ue-active', bg).value === '1' : true };
+      if (pass) b.password = pass;
+      try { await window.OF_CF.saveUser(b); closeModal(); toast(x ? 'تم حفظ التعديل' : 'تم إنشاء المستخدم. ابعت له اسم المستخدم وكلمة المرور ورابط الموقع.'); U.list = null; loadUsers(); }
+      catch (e) { $('#ue-err', bg).textContent = e.message; }
+    });
+  }
+  function openMyPass() {
+    const body = '<form id="mp-form" class="form">' + fld('mp-cur', 'كلمة المرور الحالية', inp('mp-cur', '', 'password', ' dir="ltr" autocomplete="current-password" required')) +
+      fld('mp-new', 'كلمة المرور الجديدة (8 أحرف على الأقل)', inp('mp-new', '', 'password', ' dir="ltr" autocomplete="new-password" required minlength="8"')) +
+      '<div class="field full"><div id="mp-err" class="hint" style="color:var(--bad,#b91c1c)"></div></div></form>';
+    const bg = modal('تغيير كلمة المرور', body, '<button type="button" class="btn" data-close>إلغاء</button><button type="submit" form="mp-form" class="btn primary">حفظ</button>');
+    $('#mp-form', bg).addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      try { await window.OF_CF.changePassword($('#mp-cur', bg).value, $('#mp-new', bg).value); closeModal(); toast('تم تغيير كلمة المرور'); }
+      catch (e) { $('#mp-err', bg).textContent = e.message; }
+    });
+  }
+
   /* ---------------- click delegation ---------------- */
   document.addEventListener('click', (ev) => {
     const el = ev.target.closest('[data-act],[data-client]');
@@ -2280,6 +2340,10 @@
         case 'add-client': return openClientForm(null);
         case 'edit-client': return openClientForm(S.raw.clients.find(c => c.id === id));
         case 'del-client': return deleteClient(id);
+        case 'user-edit': return openUserEdit(id);
+        case 'user-del': return confirmBox('حذف المستخدم', 'سيُحذف حساب «' + id + '» ولن يستطيع الدخول. البيانات التي أدخلها تبقى كما هي.', 'حذف', async () => { try { await window.OF_CF.deleteUser(id); toast('تم الحذف'); U.list = null; loadUsers(); } catch (e) { toast(e.message, true); } });
+        case 'my-pass': return openMyPass();
+        case 'logout': return window.OF_CF && window.OF_CF.logout();
         case 'add-tx': return openTxForm(null, { kind: el.dataset.kind, client: el.dataset.client });
         case 'edit-tx': return openTxForm(tx());
         case 'receipt': return pdfReceipt(tx());

@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-26 21:03">
+<meta name="of-build" content="2026-11-26 22:59">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -452,6 +452,7 @@ td .sub { color: var(--muted); font-size: 12px; }
 #nav-ind.ready { transition: transform .42s cubic-bezier(.65,0,.25,1), width .42s cubic-bezier(.65,0,.25,1), height .42s, opacity .2s; }
 @media (prefers-reduced-motion: reduce) { #nav-ind.ready { transition: none; } }
 @media (min-width: 901px) and (max-width: 1560px) { .app .nav a:not(.apps) svg { display: none; } .app .nav a { padding: 8px 10px; } }
+@media (min-width: 901px) and (max-width: 1440px) { .app .nav a { padding: 8px 5px; font-size: 12.5px; } .app .nav { overflow-x: auto; scrollbar-width: none; } }
 .app .btn.menu-btn { display: none; }
 @media (max-width: 900px) {
   .app { grid-template-rows: 1fr; }
@@ -488,6 +489,7 @@ td .sub { color: var(--muted); font-size: 12px; }
 <script src="logo.js"></script>
 <script src="certfont.js"></script>
 <script src="localdb.js"></script>
+<script src="cfdb.js"></script>
 <script src="core.js"></script>
 <script src="app.js"></script>
 <script src="vatcore.js"></script>
