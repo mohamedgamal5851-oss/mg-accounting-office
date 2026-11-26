@@ -191,11 +191,7 @@
   }
   /* leaving a page: the work area recedes, then the next page rises in (skipped when the system asks for reduced motion) */
   function leaveTo(target, card) {
-    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce) return go(target);
-    if (card) card.classList.add('mod-picked');
-    $('#main').classList.add('page-leave');
-    setTimeout(() => go(target), card ? 320 : 230);
+    return go(target); // simple, instant navigation; the new page fades in briefly
   }
   const go = (h) => { if (location.hash === '#' + h) route(); else location.hash = h; };
 
