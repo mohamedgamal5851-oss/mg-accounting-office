@@ -2120,6 +2120,16 @@
   }
   function feeResult() { return C.setupFees(feeInput()); }
   const officeFee = () => Number(S.ui.fcFee) || 0;
+  const pettyExp = () => Number(S.ui.fcPetty) || 0;
+  const pettyLabel = () => 'مصروفات نثرية' + (String(S.ui.fcPettyNote || '').trim() ? ' (' + String(S.ui.fcPettyNote).trim() + ')' : '');
+  /* totals under the government fees: petty expenses, office fee, and what the client pays in all */
+  function feeTotals(r) {
+    const out = [['إجمالي الرسوم الحكومية', r.total]];
+    if (pettyExp()) out.push([pettyLabel(), pettyExp()]);
+    if (officeFee()) out.push(['أتعاب المكتب', officeFee()]);
+    if (out.length > 1) out.push(['الإجمالي المطلوب من العميل', Math.round((r.total + pettyExp() + officeFee()) * 100) / 100]);
+    return out;
+  }
 
   function pageFeeCalc() {
     const u = S.ui, law = u.fcLaw || '72';
@@ -2135,19 +2145,22 @@
       '<div class="field"><label>رأس المال المصدر (جنيه)</label><input type="text" inputmode="decimal" dir="ltr" style="text-align:right" data-ui="fcIssued" data-live data-num value="' + esc(groupNum(u.fcIssued)) + '"></div>' +
       '<div class="field"><label>رأس المال المدفوع (جنيه) – فارغ = المصدر</label><input type="text" inputmode="decimal" dir="ltr" style="text-align:right" data-ui="fcPaid" data-live data-num value="' + esc(groupNum(u.fcPaid)) + '"></div>' +
       '<div class="field"><label>أتعاب المكتب (اختياري)</label><input type="text" inputmode="decimal" dir="ltr" style="text-align:right" data-ui="fcFee" data-live data-num value="' + esc(groupNum(u.fcFee)) + '"></div>' +
+      '<div class="field"><label>مصروفات نثرية (اختياري)</label><input type="text" inputmode="decimal" dir="ltr" style="text-align:right" data-ui="fcPetty" data-live data-num value="' + esc(groupNum(u.fcPetty)) + '"></div>' +
+      '<div class="field"><label>بيان المصروفات النثرية (اختياري)</label><input type="text" data-ui="fcPettyNote" data-live placeholder="مثال: انتقالات وتصوير مستندات وأختام" value="' + esc(u.fcPettyNote || '') + '"></div>' +
       '<div class="field full"><label>اختيارات</label><div class="checks">' + chk('fcCopy', 'صورة طبق الأصل من العقد والنظام الأساسي') +
       (law === '159' ? chk('fcInd', 'نشاط صناعي (اتحاد الصناعات)') : '') + chk('fcRE', 'نشاط تسويق أو وساطة عقارية أو دعاية وإعلان') + '</div></div>' +
       '</div></div></section>';
     if (!r) return h + '<div class="card"><div class="empty">اكتب رأس المال المصدر لعرض الرسوم.</div></div></div>';
     const paidNote = (u.fcPaid === '' || u.fcPaid == null) ? ' (يساوي المصدر)' : '';
     h += '<div class="tiles"><div class="tile c1"><span>إجمالي الرسوم الحكومية</span><b>' + money(r.total) + '</b><small>' + esc(cur()) + '</small></div>' +
-      (officeFee() ? '<div class="tile c4"><span>أتعاب المكتب</span><b>' + money(officeFee()) + '</b><small>' + esc(cur()) + '</small></div><div class="tile c3"><span>الإجمالي المطلوب من العميل</span><b>' + money(r.total + officeFee()) + '</b><small>' + esc(cur()) + '</small></div>' : '') +
+      (pettyExp() ? '<div class="tile c2"><span>مصروفات نثرية</span><b>' + money(pettyExp()) + '</b><small>' + esc(String(u.fcPettyNote || '').trim() || cur()) + '</small></div>' : '') +
+      (officeFee() ? '<div class="tile c4"><span>أتعاب المكتب</span><b>' + money(officeFee()) + '</b><small>' + esc(cur()) + '</small></div>' : '') +
+      (pettyExp() || officeFee() ? '<div class="tile c3"><span>الإجمالي المطلوب من العميل</span><b>' + money(r.total + pettyExp() + officeFee()) + '</b><small>' + esc(cur()) + '</small></div>' : '') +
       '<div class="tile c5"><span>رأس المال المصدر / المدفوع</span><b style="font-size:17px">' + money(r.issued) + '</b><small>المدفوع ' + money(r.paid) + paidNote + '</small></div></div>';
     let prev = '';
     h += '<section class="card"><header><h2>تفصيل الرسوم · ' + esc(LAW_NAME[r.law]) + '</h2></header><div class="tablewrap"><table><thead><tr><th>الجهة المستحقة</th><th>مسمى الرسم</th><th>طريقة الحساب</th><th class="n">المبلغ (' + esc(cur()) + ')</th></tr></thead><tbody>' +
       r.rows.map(x => { const same = x.entity === prev; prev = x.entity; return '<tr><td>' + (same ? '' : '<strong>' + esc(x.entity) + '</strong>') + '</td><td>' + esc(x.name) + '</td><td><span class="sub">' + esc(x.basis) + '</span></td><td class="n">' + (x.amount ? money(x.amount) : '—') + '</td></tr>'; }).join('') +
-      '</tbody><tfoot><tr><td colspan="3">إجمالي الرسوم الحكومية</td><td class="n">' + money(r.total) + '</td></tr>' +
-      (officeFee() ? '<tr><td colspan="3">أتعاب المكتب</td><td class="n">' + money(officeFee()) + '</td></tr><tr><td colspan="3">الإجمالي المطلوب</td><td class="n">' + money(r.total + officeFee()) + '</td></tr>' : '') + '</tfoot></table></div></section>';
+      '</tbody><tfoot>' + feeTotals(r).map(([k, v]) => '<tr><td colspan="3">' + esc(k) + '</td><td class="n">' + money(v) + '</td></tr>').join('') + '</tfoot></table></div></section>';
     h += '<div class="note">الرسوم محسوبة وفق بيان الهيئة العامة للاستثمار والمناطق الحرة لرسوم ومقابل خدمات تأسيس الشركات ذات المسؤولية المحدودة. راجع الرسوم السارية قبل السداد؛ قد تتغير.</div>';
     return h + '</div>';
   }
@@ -2155,14 +2168,12 @@
   function feeRowsForExport() {
     const r = feeResult(); let prev = '';
     const rows = r.rows.map(x => { const same = x.entity === prev; prev = x.entity; return [same ? '' : x.entity, x.name, x.basis, x.amount ? money(x.amount) : '—']; });
-    const totals = [['إجمالي الرسوم الحكومية', money(r.total)]];
-    if (officeFee()) totals.push(['أتعاب المكتب', money(officeFee())], ['الإجمالي المطلوب', money(r.total + officeFee())]);
+    const totals = feeTotals(r).map(([k, v]) => [k, money(v)]);
     return { r, rows, totals };
   }
   function feeXlsx() {
     const { r } = feeRowsForExport();
-    const rows = [['الجهة المستحقة', 'مسمى الرسم', 'طريقة الحساب', 'المبلغ']].concat(r.rows.map(x => [x.entity, x.name, x.basis, x.amount])).concat([['إجمالي الرسوم الحكومية', '', '', r.total]]);
-    if (officeFee()) rows.push(['أتعاب المكتب', '', '', officeFee()], ['الإجمالي المطلوب', '', '', r.total + officeFee()]);
+    const rows = [['الجهة المستحقة', 'مسمى الرسم', 'طريقة الحساب', 'المبلغ']].concat(r.rows.map(x => [x.entity, x.name, x.basis, x.amount])).concat(feeTotals(r).map(([k, v]) => [k, '', '', v]));
     xlsxBook(fileName('رسوم تأسيس ' + (S.ui.fcName || 'شركة')) + '.xlsx', [{ name: 'رسوم التأسيس', ctx: LAW_NAME[r.law] + ' · رأس المال المصدر ' + money(r.issued) + ' · المدفوع ' + money(r.paid), rows }]);
   }
 
@@ -2239,8 +2250,8 @@
 
   function feeRecord() {
     const cid = S.ui.fcClient; if (!cid || !writable()) return;
-    const r = feeResult(), fee = officeFee();
-    const bg = modal('تسجيل على حساب العميل', '<p style="margin:0">سيُسجَّل على حساب <b>' + esc(clientName(cid)) + '</b>:</p><ul style="margin:6px 0 0"><li>مصروفات رسوم تأسيس (نيابة عن العميل): ' + esc(moneyC(r.total)) + '</li>' + (fee ? '<li>مطالبة أتعاب تأسيس: ' + esc(moneyC(fee)) + '</li>' : '') + '</ul>',
+    const r = feeResult(), fee = officeFee(), petty = pettyExp();
+    const bg = modal('تسجيل على حساب العميل', '<p style="margin:0">سيُسجَّل على حساب <b>' + esc(clientName(cid)) + '</b>:</p><ul style="margin:6px 0 0"><li>مصروفات رسوم تأسيس (نيابة عن العميل): ' + esc(moneyC(r.total)) + '</li>' + (petty ? '<li>' + esc(pettyLabel()) + ': ' + esc(moneyC(petty)) + '</li>' : '') + (fee ? '<li>مطالبة أتعاب تأسيس: ' + esc(moneyC(fee)) + '</li>' : '') + '</ul>',
       '<button type="button" class="btn" data-close>إلغاء</button><button type="button" class="btn primary" id="fr-go">تسجيل</button>');
     $('#fr-go', bg).addEventListener('click', async () => {
       $('#fr-go', bg).disabled = true;
@@ -2248,6 +2259,7 @@
       const today = C.todayISO(), name = S.ui.fcName ? ' – ' + S.ui.fcName : '';
       const ok = await write(async () => {
         await S.db.doc('transactions/' + uid()).set({ kind: 'expense', client: cid, date: today, amount: r.total, description: 'رسوم تأسيس شركة (' + LAW_NAME[r.law] + ')' + name, seq: seq++, createdAt: new Date().toISOString() });
+        if (petty) await S.db.doc('transactions/' + uid()).set({ kind: 'expense', client: cid, date: today, amount: petty, description: pettyLabel() + ' – تأسيس شركة' + name, seq: seq++, createdAt: new Date().toISOString() });
         if (fee) await S.db.doc('transactions/' + uid()).set({ kind: 'fee', client: cid, date: today, amount: fee, service: 'تأسيس الشركات', description: 'أتعاب تأسيس شركة' + name, number: C.nextNumber(S.raw.transactions, 'fee'), seq: seq++, createdAt: new Date().toISOString() });
       });
       if (ok) { closeModal(); toast('تم التسجيل على حساب العميل'); }
