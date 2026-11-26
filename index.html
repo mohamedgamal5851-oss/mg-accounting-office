@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-26 01:34">
+<meta name="of-build" content="2026-11-26 20:07">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -110,9 +110,9 @@ td.n { white-space: nowrap; text-align: end; }
 .to-mods-ic svg { width: 18px; height: 18px; }
 .to-mods:hover .to-mods-ic, .to-mods:focus-visible .to-mods-ic { width: 20px; opacity: 1; }
 #main.page-leave { animation: pageLeave .23s cubic-bezier(.4,0,1,1) forwards; }
-#main.page-enter { animation: pageEnter .38s cubic-bezier(.16,1,.3,1); }
+#main.page-enter { animation: pageEnter .42s cubic-bezier(.16,1,.3,1); }
 @keyframes pageLeave { to { opacity: 0; transform: scale(.97) translateY(6px); filter: blur(2px); } }
-@keyframes pageEnter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes pageEnter { from { opacity: 0; transform: translate(calc(var(--nav-dir, 0) * 36px), calc((1 - var(--nav-dir, 0) * var(--nav-dir, 0)) * 10px)); } to { opacity: 1; transform: none; } }
 .mods .mod { animation: modIn .55s cubic-bezier(.16,1,.3,1) both; animation-delay: calc(var(--i, 0) * 90ms + 60ms); }
 @keyframes modIn { from { opacity: 0; transform: translateY(18px) scale(.96); } to { opacity: 1; transform: none; } }
 .mod.mod-picked { animation: modPick .32s cubic-bezier(.4,0,.2,1) forwards; z-index: 2; }
@@ -416,6 +416,43 @@ td .sub { color: var(--muted); font-size: 12px; }
   .doc-row { grid-template-columns: 1fr 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+/* Top navigation bar (replaces the side menu on wide screens): logo, the module's pages in one row */
+.app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+.app .side { flex-direction: row; align-items: center; gap: 14px; padding: 0 18px; height: 58px; overflow: visible; position: relative; z-index: 20; box-shadow: 0 1px 0 rgba(0,0,0,.25); }
+.app .logo { display: grid; grid-auto-flow: column; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 0; white-space: nowrap; flex: none; padding-inline-end: 14px; border-inline-end: 1px solid rgba(255,255,255,.14); }
+.app .logo #logo-img { grid-row: 1 / 3; width: auto !important; height: 34px !important; margin: 0 !important; }
+.app .logo strong { font-size: 14.5px; } .app .logo span { font-size: 11px; }
+.app .nav { flex-direction: row; align-items: center; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.app .nav::-webkit-scrollbar { display: none; }
+.app .nav a { padding: 8px 11px; white-space: nowrap; font-size: 13.5px; gap: 7px; }
+.app .nav a svg { width: 16px; height: 16px; }
+.app .nav a.apps { margin-inline-end: 6px; }
+.app .nav-mod { display: none; }
+.app .side .foot { display: none; }
+.app > .side, .app > .main { min-width: 0; }
+.app .nav a { position: relative; z-index: 1; transition: color .25s, background .2s; }
+.app .nav a.on { background: transparent; color: #fff; }
+.app .nav a:not(.on):hover { background: rgba(255,255,255,.06); }
+#nav-ind { position: absolute; left: 0; top: 0; width: 0; height: 0; border-radius: 9px; background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); pointer-events: none; z-index: 0; opacity: 0; }
+#nav-ind::after { content: ''; position: absolute; inset-inline: 22%; bottom: -10px; height: 3px; border-radius: 3px 3px 0 0; background: #fff; opacity: .9; }
+#nav-ind.ready { transition: transform .42s cubic-bezier(.65,0,.25,1), width .42s cubic-bezier(.65,0,.25,1), height .42s, opacity .2s; }
+@media (prefers-reduced-motion: reduce) { #nav-ind.ready { transition: none; } }
+@media (min-width: 901px) and (max-width: 1560px) { .app .nav a:not(.apps) svg { display: none; } .app .nav a { padding: 8px 10px; } }
+.app .btn.menu-btn { display: none; }
+@media (max-width: 900px) {
+  .app { grid-template-rows: 1fr; }
+  .app .side { position: fixed; inset-block: 0; inset-inline-start: 0; width: 250px; z-index: 40; flex-direction: column; align-items: stretch; height: auto; padding: 20px 14px; gap: 18px; overflow-y: auto; box-shadow: 0 0 40px rgba(0,0,0,.25); }
+  .app .logo { display: flex; flex-direction: column; border: 0; padding: 0 8px; }
+  .app .logo #logo-img { width: 150px !important; height: auto !important; margin-bottom: 8px !important; }
+  .app .nav { flex-direction: column; align-items: stretch; overflow: visible; }
+  .app .nav a { font-size: 14px; }
+  .app .nav-mod { display: block; }
+  #nav-ind { display: none; }
+  .app .nav a.on { background: rgba(255,255,255,.13); }
+  .app .side .foot { display: flex; }
+  .app .btn.menu-btn { display: inline-flex; }
+}
+
 </style>
 </head>
 <body>

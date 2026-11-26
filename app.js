@@ -122,17 +122,41 @@
       const img = $('#logo-img'); img.src = L.light; img.style.display = 'block';
       if (!document.querySelector('link[rel=icon]')) { const l = document.createElement('link'); l.rel = 'icon'; l.href = L.icon; document.head.appendChild(l); }
     }
-    $('#app').classList.toggle('floating', !pinned); $('#side').classList.remove('open');
+    // wide screens: the menu is a bar across the top; narrow screens: it opens from the «القائمة» button
+    $('#app').classList.remove('floating'); $('#side').classList.remove('open');
     $('#side-foot').innerHTML = '<button type="button" class="pin-btn" id="pin-btn">' + (pinned ? '⇥ إخفاء القائمة' : '📌 تثبيت القائمة') + '</button><span id="as-of"></span>';
     $('#pin-btn').onclick = () => { pinned = !pinned; try { localStorage.setItem('of-pinned', pinned ? '1' : '0'); } catch (e) {} renderShell(); };
     $('#side-scrim').onclick = () => $('#side').classList.remove('open');
     // the hidden menu opens from the screen edge only when the pointer rests there (0.6 s), not when it passes by
     let hoverOpened = false, hoverTimer = 0;
     const edge = $('#side-edge');
-    edge.onmouseenter = () => { if (pinned) return; clearTimeout(hoverTimer); hoverTimer = setTimeout(() => { hoverOpened = true; $('#side').classList.add('open'); }, 600); };
+    edge.onmouseenter = () => { if (pinned || true) return; clearTimeout(hoverTimer); hoverTimer = setTimeout(() => { hoverOpened = true; $('#side').classList.add('open'); }, 600); };
     edge.onmouseleave = () => clearTimeout(hoverTimer);
     $('#side').onmouseleave = () => { if (!pinned && hoverOpened) { hoverOpened = false; $('#side').classList.remove('open'); } };
   }
+  /* top bar: a highlight slides from the previous page's tab to the new one, and the page enters from that side */
+  let navIdx = -1;
+  function placeNavIndicator() {
+    const side = $('#side'), nav = $('#nav');
+    let ind = $('#nav-ind');
+    if (!ind) { ind = document.createElement('span'); ind.id = 'nav-ind'; side.appendChild(ind); }
+    const links = Array.from(nav.querySelectorAll('a')), on = nav.querySelector('a.on'), i = links.indexOf(on);
+    const m = $('#main'); m.style.setProperty('--nav-dir', navIdx < 0 || i < 0 || i === navIdx ? 0 : (i > navIdx ? -1 : 1));
+    navIdx = i;
+    if (!on) { ind.style.opacity = '0'; return; }
+    const place = () => {
+      const sr = side.getBoundingClientRect(), r = on.getBoundingClientRect();
+      ind.style.width = r.width + 'px'; ind.style.height = r.height + 'px';
+      ind.style.transform = 'translate(' + (r.left - sr.left) + 'px,' + (r.top - sr.top) + 'px)';
+      ind.style.opacity = '1';
+    };
+    // keep the active tab in view when the bar scrolls
+    if (on.offsetLeft < nav.scrollLeft || on.offsetLeft + on.offsetWidth > nav.scrollLeft + nav.clientWidth) on.scrollIntoView({ block: 'nearest', inline: 'center' });
+    place();
+    if (!ind.classList.contains('ready')) requestAnimationFrame(() => ind.classList.add('ready'));
+    nav.onscroll = () => { ind.classList.remove('ready'); place(); requestAnimationFrame(() => ind.classList.add('ready')); };
+  }
+  window.addEventListener('resize', () => { const ind = $('#nav-ind'); if (ind) { ind.classList.remove('ready'); placeNavIndicator(); } });
   function renderNav() {
     const cp = currentPage(), page = cp.page; noteModule(page); const mod = moduleOf(page);
     const A = S.M && S.M.alerts;
@@ -144,9 +168,11 @@
       items.map(([k, label, ic]) => k === 'f41' ? '<a class="soon" aria-disabled="true">' + svgIcon(k) + '<span>' + esc(label) + '</span></a>' :
         '<a href="#' + k + '" class="' + (mod && on(k) ? 'on' : '') + '">' + svgIcon(ic || k) + '<span>' + esc(label) + '</span>' +
         (badge[k] ? '<span class="badge" title="إجراءات متأخرة">' + badge[k] + '</span>' : '') + '</a>').join('');
+    placeNavIndicator();
     const build = (document.querySelector('meta[name=of-build]') || {}).content || '';
     $('#as-of').textContent = 'اليوم: ' + C.todayISO() + (build ? ' · الإصدار ' + build : '');
     $('.logo span').textContent = mod ? mod.name : 'إدارة المكتب';
+    $('.logo').title = 'اليوم: ' + C.todayISO() + (build ? ' · الإصدار ' + build : '');
     $('#logo-name').textContent = settings().officeName || 'مكتب المحاسبة';
     document.title = (settings().officeName || 'مكتب المحاسبة') + ' – إدارة المكتب';
   }
