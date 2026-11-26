@@ -323,10 +323,28 @@
   function restoreFocus(f) {
     if (!f) return;
     const el = document.querySelector('[data-ui="' + f.key + '"]'); if (!el) return;
-    el.focus(); try { if (f.s != null) el.setSelectionRange(f.s, f.e); } catch (e) {}
+    el.focus();
+    if (S.numCaret && S.numCaret.key === f.key) {
+      // put the caret back after the same number of digits, now that separators were added or removed
+      let n = S.numCaret.n, pos = 0; S.numCaret = null;
+      while (pos < el.value.length && n > 0) { if (/[\d.]/.test(el.value[pos])) n--; pos++; }
+      try { el.setSelectionRange(pos, pos); } catch (e) {}
+      return;
+    }
+    try { if (f.s != null) el.setSelectionRange(f.s, f.e); } catch (e) {}
   }
   // filters: any element with data-ui writes to S.ui and re-renders
-  document.addEventListener('input', (ev) => { const el = ev.target; if (el.dataset && el.dataset.ui && el.dataset.live != null) { S.ui[el.dataset.ui] = el.value; renderPage(); } });
+  document.addEventListener('input', (ev) => {
+    const el = ev.target; if (!(el.dataset && el.dataset.ui && el.dataset.live != null)) return;
+    if (el.dataset.num != null) {
+      // amount fields: keep only digits and one decimal point; the page shows them with thousands separators
+      const before = el.value.slice(0, el.selectionStart == null ? el.value.length : el.selectionStart);
+      let raw = el.value.replace(/[^\d.]/g, ''); const dot = raw.indexOf('.'); if (dot >= 0) raw = raw.slice(0, dot + 1) + raw.slice(dot + 1).replace(/\./g, '');
+      S.ui[el.dataset.ui] = raw; S.numCaret = { key: el.dataset.ui, n: before.replace(/[^\d.]/g, '').length };
+    } else S.ui[el.dataset.ui] = el.value;
+    renderPage();
+  });
+  const groupNum = (raw) => { const s = String(raw == null ? '' : raw); if (!s) return ''; const [i, f] = s.split('.'); return (i || '').replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (f != null ? '.' + f : ''); };
   document.addEventListener('change', (ev) => {
     const el = ev.target;
     if (el.dataset && el.dataset.ui && el.dataset.live == null) { S.ui[el.dataset.ui] = el.type === 'checkbox' ? (el.checked ? '1' : '') : el.value; renderPage(); return; }
@@ -2114,9 +2132,9 @@
       '<div class="field"><label>القانون</label><select data-ui="fcLaw">' + options([['72', LAW_NAME['72']], ['159', LAW_NAME['159']]], law) + '</select></div>' +
       '<div class="field"><label>اسم الشركة (اختياري)</label><input type="text" data-ui="fcName" data-live value="' + esc(u.fcName || '') + '"></div>' +
       '<div class="field"><label>ربط بعميل (اختياري)</label><select data-ui="fcClient">' + options(clientOptions(true), u.fcClient || '', '—') + '</select></div>' +
-      '<div class="field"><label>رأس المال المصدر (جنيه)</label><input type="number" min="0" step="1" data-ui="fcIssued" data-live value="' + esc(u.fcIssued || '') + '"></div>' +
-      '<div class="field"><label>رأس المال المدفوع (جنيه) – فارغ = المصدر</label><input type="number" min="0" step="1" data-ui="fcPaid" data-live value="' + esc(u.fcPaid || '') + '"></div>' +
-      '<div class="field"><label>أتعاب المكتب (اختياري)</label><input type="number" min="0" step="1" data-ui="fcFee" data-live value="' + esc(u.fcFee || '') + '"></div>' +
+      '<div class="field"><label>رأس المال المصدر (جنيه)</label><input type="text" inputmode="decimal" dir="ltr" style="text-align:right" data-ui="fcIssued" data-live data-num value="' + esc(groupNum(u.fcIssued)) + '"></div>' +
+      '<div class="field"><label>رأس المال المدفوع (جنيه) – فارغ = المصدر</label><input type="text" inputmode="decimal" dir="ltr" style="text-align:right" data-ui="fcPaid" data-live data-num value="' + esc(groupNum(u.fcPaid)) + '"></div>' +
+      '<div class="field"><label>أتعاب المكتب (اختياري)</label><input type="text" inputmode="decimal" dir="ltr" style="text-align:right" data-ui="fcFee" data-live data-num value="' + esc(groupNum(u.fcFee)) + '"></div>' +
       '<div class="field full"><label>اختيارات</label><div class="checks">' + chk('fcCopy', 'صورة طبق الأصل من العقد والنظام الأساسي') +
       (law === '159' ? chk('fcInd', 'نشاط صناعي (اتحاد الصناعات)') : '') + chk('fcRE', 'نشاط تسويق أو وساطة عقارية أو دعاية وإعلان') + '</div></div>' +
       '</div></div></section>';
