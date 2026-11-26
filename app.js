@@ -66,7 +66,7 @@
     requestAnimationFrame(() => { pending = false; rebuild(); renderNav(); renderPage(); });
   }
   const allLoaded = () => COLS.every(c => S.loaded[c]) && S.loaded.settings;
-  const writable = () => !!S.db && S.canWrite !== false;
+  const writable = () => !!S.db && S.canWrite !== false && curLevel() === 'edit';
 
   function options(list, sel, allLabel) {
     return (allLabel != null ? '<option value="">' + esc(allLabel) + '</option>' : '') + list.map(v => {
@@ -111,6 +111,26 @@
   const SHARED = ['clients', 'client', 'backup', 'users'];
   let lastMod = (() => { try { return sessionStorage.getItem('of-mod') || 'office'; } catch (e) { return 'office'; } })();
   const moduleOf = (page) => page === 'home' ? null : page === 'vat' ? MODULES[1] : SHARED.includes(page) ? (MODULES.find(m => m.id === lastMod) || MODULES[0]) : MODULES[0];
+  /* page permissions (office website only): each user sees each page as hidden, view-only or editable; the manager sees all */
+  const PERM_PAGES = [['dashboard', 'لوحة التحكم'], ['clients', 'العملاء وكشوف الحساب'], ['finance', 'الحركات المالية'], ['tasks', 'الإجراءات والمواعيد'], ['contracts', 'العقود والأتعاب'],
+    ['certs', 'الشهادات'], ['feecalc', 'حاسبة رسوم التأسيس'], ['reports', 'التقارير'], ['access', 'بيانات المنظومات (حسابات العملاء)'], ['backup', 'تنزيل النسخ الاحتياطية'], ['setup', 'الإعدادات'], ['vat', 'الإقرارات الضريبية (كل صفحاتها)']];
+  const LEVEL_NAME = { none: 'مخفية', view: 'عرض فقط', edit: 'عرض وتعديل' };
+  const permKeyOfNav = (k) => /^vat|^f41$/.test(k) ? 'vat' : k;
+  function permKeyOf(page, extra) {
+    if (page === 'client') return extra === 'access' ? 'access' : 'clients';
+    if (page === 'home' || page === 'users') return null;
+    return permKeyOfNav(page);
+  }
+  function level(key) {
+    if (!key || !window.OF_CF) return 'edit';
+    const me = window.OF_CF.me(); if (!me) return 'none';
+    if (me.role === 'admin') return 'edit';
+    return (me.perms && me.perms[key]) || (me.role === 'viewer' ? 'view' : 'edit');
+  }
+  const curLevel = () => { const cp = currentPage(); return level(permKeyOf(cp.page, cp.extra)); };
+  const navVisible = (k) => k === 'users' || level(permKeyOfNav(k)) !== 'none';
+  const modHome = (m) => { if (navVisible(m.home)) return m.home; const f = m.nav.find(([k]) => k !== 'f41' && navVisible(k) && !SHARED.includes(k)); return f ? f[0] : m.home; };
+  const modVisible = (m) => m.nav.some(([k]) => k !== 'f41' && !SHARED.includes(k) && navVisible(k));
   function noteModule(page) {
     if (page === 'home' || SHARED.includes(page)) return;
     lastMod = moduleOf(page).id; try { sessionStorage.setItem('of-mod', lastMod); } catch (e) {}
@@ -140,7 +160,7 @@
   /* top bar menus: hovering a tab opens its useful pages and actions (Odoo-style) */
   const TASK_TABS = [['overdue', 'المتأخرة'], ['soon', 'تستحق قريبًا'], ['open', 'كل المفتوحة'], ['waiting', 'بانتظار العميل'], ['done', 'المنجزة']];
   function navMenu(k) {
-    const W = writable(), A = (label, act, data) => W ? { label, act, data: data || {} } : null, L = (label, href) => ({ label, href });
+    const W = !!S.db && S.canWrite !== false && level(permKeyOfNav(k)) === 'edit', A = (label, act, data) => W ? { label, act, data: data || {} } : null, L = (label, href) => ({ label, href });
     const M = {
       dashboard: [L('لوحة التحكم', '#dashboard'), L('الإجراءات المتأخرة', '#tasks-overdue'), L('أرصدة العملاء وأعمار الديون', '#reports-balances')],
       clients: [L('قائمة العملاء', '#clients'), A('+ عميل جديد', 'add-client'), L('استيراد العملاء من Excel', '#setup')],
@@ -191,7 +211,7 @@
     const cp = currentPage(), page = cp.page;
     if (page === 'home') return [];
     const mod = moduleOf(page), label = (k) => (mod.nav.find(n => n[0] === k) || [])[1];
-    const out = [['الأقسام', '#home'], [mod.name, '#' + mod.home]];
+    const out = [['الأقسام', '#home'], [mod.name, '#' + modHome(mod)]];
     if (page === 'vat' && window.OFVat && window.OFVat.crumbs) out.push(...window.OFVat.crumbs(cp.sub));
     else if (page === 'client') {
       out.push([label('clients') || 'العملاء', '#clients']);
@@ -239,7 +259,7 @@
     const A = S.M && S.M.alerts;
     const badge = { tasks: A ? A.overdue.length : 0 };
     const on = (k) => page === 'vat' ? (k === 'vat-rep' ? /^rep/.test(cp.sub) : k === 'vat-parties' ? /^parties/.test(cp.sub) : k === 'vat-list' ? /^(list|ret)/.test(cp.sub) : k === 'vat' && !cp.sub) : (page === k || (page === 'client' && k === 'clients'));
-    const items = mod ? mod.nav : MODULES.map(m => [m.home, m.name, m.icon]);
+    const items = (mod ? mod.nav : MODULES.filter(modVisible).map(m => [modHome(m), m.name, m.icon])).filter(([k]) => navVisible(k));
     $('#nav').innerHTML = '<a href="#home" class="apps' + (page === 'home' ? ' on' : '') + '">' + svgIcon('apps') + '<span>' + (mod ? 'جميع الأقسام' : 'الأقسام') + '</span></a>' +
       (mod ? '<div class="nav-mod">' + esc(mod.name) + '</div>' : '') +
       items.map(([k, label, ic]) => k === 'f41' ? '<a class="soon" aria-disabled="true">' + svgIcon(k) + '<span>' + esc(label) + '</span></a>' :
@@ -279,7 +299,7 @@
     return '<div class="top"><button type="button" class="btn menu-btn" data-act="menu">☰ القائمة</button><div>' +
       (home ? '<h1>' + esc(title) + '</h1>' : '<h1><button type="button" class="to-mods" data-act="to-mods" title="' + esc(tip) + '"><span class="to-mods-ic">' + svgIcon(atModHome ? 'apps' : 'dashboard') + '</span>' + esc(title) + '</button></h1>') +
       crumbHtml() + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div><div class="grow"></div>' + (actions || '') + '</div>' +
-      (S.db && S.canWrite === false ? '<div class="ro-banner">يمكنك عرض البيانات فقط، والتعديل متاح لأصحاب صلاحية التعديل.</div>' : '');
+      (S.db && (S.canWrite === false || curLevel() === 'view') ? '<div class="ro-banner">يمكنك عرض البيانات فقط، والتعديل متاح لأصحاب صلاحية التعديل.</div>' : '');
   }
   const actBtn = (act, label, cls, extra) => writable() ? '<button type="button" class="btn ' + (cls || '') + '" data-act="' + act + '"' + (extra || '') + '>' + esc(label) + '</button>' : '';
   const expBtns = (key) => S.downloads ? '<button type="button" class="btn" data-act="pdf" data-key="' + key + '">⤓ PDF</button><button type="button" class="btn" data-act="xlsx" data-key="' + key + '">⤓ Excel</button>' : '';
@@ -298,6 +318,7 @@
     if (!allLoaded()) { main.innerHTML = '<div class="loading">' + (S.slow ? 'يستغرق تحميل البيانات وقتًا أطول من المعتاد، وستظهر فور استجابة الاتصال.' : 'جارٍ تحميل البيانات…') + '</div>'; return; }
     const focus = captureFocus();
     let h = '';
+    if (curLevel() === 'none') { main.innerHTML = topBar('غير مسموح') + '<div class="content"><div class="card"><div class="hero-empty"><h2>ليست لديك صلاحية على هذه الصفحة</h2><p>اطلب من مدير البرنامج إتاحتها لحسابك من صفحة «المستخدمون».</p><a class="btn" href="#home">العودة إلى الأقسام</a></div></div></div>'; return; }
     if (page === 'home') h = pageHome();
     else if (page === 'backup') h = pageBackup();
     else if (page === 'users') h = pageUsers();
@@ -376,7 +397,7 @@
     const stat = { office: int(M.active.length) + ' عميل نشط' + (A.overdue.length ? ' · ' + int(A.overdue.length) + ' إجراء متأخر' : ''),
       tax: vat ? int(vat.open) + ' إقرار تحت الإعداد' + (vat.diff ? ' · ' + int(vat.diff) + ' به فروق' : '') : '' };
     let h = topBar(settings().officeName || 'مكتب المحاسبة', 'اختر القسم') + '<div class="content"><div class="mods">';
-    for (const [i, m] of MODULES.entries()) h += '<a class="mod" style="--i:' + i + '" href="#' + m.home + '" data-act="open-mod" data-to="' + m.home + '"><span class="mod-ic">' + svgIcon(m.icon) + '</span><b>' + esc(m.name) + '</b><small>' + esc(m.desc) + '</small><span class="mod-stat">' + esc(stat[m.id] || '') + '</span></a>';
+    for (const [i, m] of MODULES.filter(modVisible).entries()) h += '<a class="mod" style="--i:' + i + '" href="#' + modHome(m) + '" data-act="open-mod" data-to="' + modHome(m) + '"><span class="mod-ic">' + svgIcon(m.icon) + '</span><b>' + esc(m.name) + '</b><small>' + esc(m.desc) + '</small><span class="mod-stat">' + esc(stat[m.id] || '') + '</span></a>';
     return h + '</div></div>';
   }
   function pageDashboard() {
@@ -481,7 +502,7 @@
       '<div class="bal"><small>الرصيد الحالي</small><b class="' + (a.balance > 0.004 ? 'pos' : a.balance < -0.004 ? 'neg' : '') + '">' + money(Math.abs(a.balance)) + ' ' + esc(cur()) + '</b><small>' + (a.balance > 0.004 ? 'مستحق على العميل' : a.balance < -0.004 ? 'دفعة مقدمة للعميل' : 'لا يوجد رصيد') + '</small>' +
       (a.balance > 0.004 ? '<div style="margin-top:8px"><button type="button" class="btn sm" data-act="reminder" data-id="' + c.id + '">رسالة تذكير بالمستحقات</button></div>' : '') + '</div></div></section>';
     const tasksOpen = M.tasks.filter(t => t.client === c.id && t.status !== 'done').length;
-    const tabs = [['statement', 'كشف الحساب'], ['tasks', 'الإجراءات', tasksOpen], ['contracts', 'العقود والأتعاب'], ['info', 'البيانات والمستندات'], ['access', 'بيانات المنظومات']];
+    const tabs = [['statement', 'كشف الحساب'], ['tasks', 'الإجراءات', tasksOpen], ['contracts', 'العقود والأتعاب'], ['info', 'البيانات والمستندات'], ['access', 'بيانات المنظومات']].filter(t => t[0] !== 'access' || level('access') !== 'none');
     h += '<div class="tabs">' + tabs.map(([k, l, n]) => '<a href="#client-' + k + '-' + c.id + '" class="' + (tab === k ? 'on' : '') + '">' + esc(l) + (n ? '<span class="count">' + n + '</span>' : '') + '</a>').join('') + '</div>';
     if (tab === 'statement') h += clientStatementTab(c);
     else if (tab === 'tasks') {
@@ -2271,7 +2292,8 @@
   }
 
   /* ---------------- users and own account (office website on Cloudflare only) ---------------- */
-  const ROLE_NAME = { admin: 'مدير البرنامج', staff: 'موظف (إضافة وتعديل)', viewer: 'اطلاع فقط' };
+  const ROLE_NAME = { admin: 'مدير البرنامج', user: 'مستخدم بصلاحيات محددة', staff: 'مستخدم بصلاحيات محددة', viewer: 'مستخدم بصلاحيات محددة' };
+  const permSummary = (x) => { if (x.role === 'admin') return 'كل الصفحات'; const p = x.perms || {}; const e = PERM_PAGES.filter(([k]) => p[k] === 'edit').length, v = PERM_PAGES.filter(([k]) => p[k] === 'view').length; return e + ' تعديل · ' + v + ' عرض · ' + (PERM_PAGES.length - e - v) + ' مخفية'; };
   const U = { list: null, loading: false, err: '' };
   function loadUsers() {
     if (U.loading || !S.isOwner) return; U.loading = true;
@@ -2290,9 +2312,9 @@
       if (U.err) h += '<div class="empty">' + esc(U.err) + '</div>';
       else if (!U.list) h += '<div class="empty">جارٍ التحميل…</div>';
       else h += '<div class="table-wrap"><table><thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>الحالة</th><th>آخر دخول</th><th></th></tr></thead><tbody>' +
-        U.list.map(x => '<tr><td>' + esc(x.name) + '</td><td dir="ltr" style="text-align:right">' + esc(x.username) + '</td><td>' + esc(ROLE_NAME[x.role] || x.role) + '</td><td>' + (x.active ? '<span class="pill ok">مفعّل</span>' : '<span class="pill">موقوف</span>') + '</td><td>' + esc((x.lastLogin || '').replace('T', ' ').slice(0, 16) || '—') + '</td>' +
+        U.list.map(x => '<tr><td>' + esc(x.name) + '</td><td dir="ltr" style="text-align:right">' + esc(x.username) + '</td><td>' + esc(ROLE_NAME[x.role] || x.role) + '<div class="hint">' + esc(permSummary(x)) + '</div></td><td>' + (x.active ? '<span class="pill ok">مفعّل</span>' : '<span class="pill">موقوف</span>') + '</td><td>' + esc((x.lastLogin || '').replace('T', ' ').slice(0, 16) || '—') + '</td>' +
           '<td style="white-space:nowrap"><button type="button" class="btn sm" data-act="user-edit" data-id="' + esc(x.username) + '">تعديل</button>' + (x.username !== me.username ? ' <button type="button" class="btn sm danger" data-act="user-del" data-id="' + esc(x.username) + '">حذف</button>' : '') + '</td></tr>').join('') + '</tbody></table></div>';
-      h += '<div class="body"><p class="hint" style="margin:0"><b>مدير البرنامج</b>: كل شيء، ومنه إدارة المستخدمين، واسترجاع النسخ الاحتياطية، وحذف العملاء، وخزنة بيانات الدخول. <b>موظف</b>: يضيف ويعدّل العملاء والحركات والإجراءات والإقرارات. <b>اطلاع فقط</b>: يشاهد ويصدّر التقارير دون تعديل.</p></div></section>';
+      h += '<div class="body"><p class="hint" style="margin:0"><b>مدير البرنامج</b>: كل الصفحات، ومعها إدارة المستخدمين، واسترجاع النسخ الاحتياطية، وحذف العملاء، وخزنة بيانات الدخول. <b>مستخدم بصلاحيات محددة</b>: تحدد له كل صفحة: مخفية، أو عرض فقط، أو عرض وتعديل.</p></div></section>';
     }
     return h + '</div>';
   }
@@ -2302,13 +2324,21 @@
       fld('ue-name', 'الاسم', inp('ue-name', x ? x.name : '', 'text', ' required')) +
       fld('ue-user', 'اسم المستخدم (إنجليزي أو أرقام)', inp('ue-user', x ? x.username : '', 'text', ' dir="ltr" autocapitalize="none" autocomplete="off" required pattern="[A-Za-z0-9._\\-]{3,32}"' + (x ? ' readonly' : ''))) +
       fld('ue-pass', x ? 'كلمة مرور جديدة (اتركها فارغة لعدم التغيير)' : 'كلمة المرور (8 أحرف على الأقل)', inp('ue-pass', '', 'text', ' dir="ltr" autocomplete="new-password"' + (x ? '' : ' required minlength="8"'))) +
-      fld('ue-role', 'الصلاحية', '<select id="ue-role">' + options(Object.entries(ROLE_NAME), x ? x.role : 'staff') + '</select>') +
+      fld('ue-role', 'نوع الحساب', '<select id="ue-role">' + options([['user', 'مستخدم بصلاحيات محددة'], ['admin', 'مدير البرنامج (كل الصلاحيات)']], x && x.role === 'admin' ? 'admin' : 'user') + '</select>') +
       (x ? fld('ue-active', 'الحالة', '<select id="ue-active">' + options([['1', 'مفعّل'], ['0', 'موقوف (لا يستطيع الدخول)']], x.active ? '1' : '0') + '</select>') : '') +
+      '<div class="field full" id="ue-perms"><label>صلاحيات الصفحات</label><div class="toolbar" style="margin:0 0 6px">' +
+        Object.entries(LEVEL_NAME).map(([lv, nm]) => '<button type="button" class="btn sm" data-all="' + lv + '">الكل: ' + esc(nm) + '</button>').join('') + '</div>' +
+        '<div class="table-wrap"><table><tbody>' + PERM_PAGES.map(([k, nm]) => { const cur = x && x.perms ? x.perms[k] || 'edit' : 'edit';
+          return '<tr><td>' + esc(nm) + '</td><td style="width:170px"><select data-perm="' + k + '">' + options(Object.entries(LEVEL_NAME), cur) + '</select></td></tr>'; }).join('') + '</tbody></table></div></div>' +
       '<div class="field full"><div id="ue-err" class="hint" style="color:var(--bad,#b91c1c)"></div></div></form>';
-    const bg = modal(x ? 'تعديل مستخدم' : 'مستخدم جديد', body, '<button type="button" class="btn" data-close>إلغاء</button><button type="submit" form="ue-form" class="btn primary">حفظ</button>');
+    const bg = modal(x ? 'تعديل مستخدم' : 'مستخدم جديد', body, '<button type="button" class="btn" data-close>إلغاء</button><button type="submit" form="ue-form" class="btn primary">حفظ</button>', true);
+    const syncRole = () => { $('#ue-perms', bg).style.display = $('#ue-role', bg).value === 'admin' ? 'none' : ''; };
+    $('#ue-role', bg).addEventListener('change', syncRole); syncRole();
+    bg.querySelectorAll('[data-all]').forEach(b => b.addEventListener('click', () => bg.querySelectorAll('[data-perm]').forEach(sel => { sel.value = b.dataset.all; })));
     $('#ue-form', bg).addEventListener('submit', async (ev) => {
       ev.preventDefault();
-      const pass = $('#ue-pass', bg).value, b = { username: $('#ue-user', bg).value.trim(), name: $('#ue-name', bg).value.trim(), role: $('#ue-role', bg).value, active: x ? $('#ue-active', bg).value === '1' : true };
+      const pass = $('#ue-pass', bg).value, b = { username: $('#ue-user', bg).value.trim(), name: $('#ue-name', bg).value.trim(), role: $('#ue-role', bg).value, active: x ? $('#ue-active', bg).value === '1' : true, perms: {} };
+      bg.querySelectorAll('[data-perm]').forEach(sel => { b.perms[sel.dataset.perm] = sel.value; });
       if (pass) b.password = pass;
       try { await window.OF_CF.saveUser(b); closeModal(); toast(x ? 'تم حفظ التعديل' : 'تم إنشاء المستخدم. ابعت له اسم المستخدم وكلمة المرور ورابط الموقع.'); U.list = null; loadUsers(); }
       catch (e) { $('#ue-err', bg).textContent = e.message; }
@@ -2378,7 +2408,7 @@
         case 'cred-show': { const k = el.dataset.key; if (V.shown.has(k)) V.shown.delete(k); else V.shown.add(k); return renderPage(); }
         default: if (window.OFVat && a.indexOf('vat-') === 0) return window.OFVat.act(a, el);
           break;
-        case 'to-mods': { const cp = currentPage(), mod = moduleOf(cp.page); const atHome = !mod || (cp.page === mod.home && !cp.sub) || (cp.page === 'vat' && !cp.sub); return leaveTo(atHome ? 'home' : mod.home); }
+        case 'to-mods': { const cp = currentPage(), mod = moduleOf(cp.page); const atHome = !mod || (cp.page === mod.home && !cp.sub) || (cp.page === 'vat' && !cp.sub); return leaveTo(atHome ? 'home' : modHome(mod)); }
         case 'open-mod': return leaveTo(el.dataset.to, el);
         case 'cred-copy': return navigator.clipboard.writeText(credValue(el.dataset.key)).then(() => toast('تم النسخ'), () => toast('تعذّر النسخ', true));
       }

@@ -98,6 +98,8 @@
   async function sync(full) {
     const r = await api('sync?since=' + (full ? 0 : Math.max(0, since - OVERLAP_MS)));
     if (full) mem.clear();
+    // the manager changed this person's pages or role: start again with the new permissions
+    if (r.me && me && JSON.stringify([r.me.role, r.me.perms]) !== JSON.stringify([me.role, me.perms])) { if (full) me = r.me; else { location.reload(); return; } }
     apply(r.docs);
     since = Math.max(since, r.now || 0);
   }

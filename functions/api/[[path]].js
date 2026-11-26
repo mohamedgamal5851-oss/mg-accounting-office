@@ -22,8 +22,32 @@ async function ensureSchema(db) {
     db.prepare('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, name TEXT, role TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, fails INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0, created TEXT, last_login TEXT)'),
     db.prepare('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT NOT NULL, expires INTEGER NOT NULL)')
   ]);
+  try { await db.prepare('ALTER TABLE users ADD COLUMN perms TEXT').run(); } catch (e) { /* already there */ }
   schemaReady = true;
 }
+
+/* page permissions: every page (or group of pages) gets none / view / edit per user; the manager (admin) has everything.
+   The server applies them too: a collection is sent only to users who may see a page that needs it, and written only by
+   users who may edit a page that writes it. */
+const PERM_KEYS = ['dashboard', 'clients', 'finance', 'tasks', 'contracts', 'certs', 'feecalc', 'reports', 'backup', 'setup', 'access', 'vat'];
+const READ_GATE = { vatReturns: ['vat'], vatParties: ['vat'], vatInvoices: ['vat'], vatFiles: ['vat'], credentials: ['access'], certificates: ['certs'] };
+const WRITE_BY = {
+  clients: ['clients'], transactions: ['finance', 'clients', 'feecalc', 'contracts'], tasks: ['tasks', 'clients', 'vat'], contracts: ['contracts', 'clients'],
+  certificates: ['certs'], staff: ['setup'], meta: ['setup', 'certs'], credentials: ['access'],
+  vatReturns: ['vat'], vatParties: ['vat'], vatInvoices: ['vat'], vatFiles: ['vat']
+};
+function permsOf(u) {
+  let p = {}; try { p = JSON.parse(u.perms || '{}') || {}; } catch (e) {}
+  const base = u.role === 'viewer' ? 'view' : 'edit', out = {};
+  for (const k of PERM_KEYS) {
+    let v = ['none', 'view', 'edit'].includes(p[k]) ? p[k] : base;
+    if (u.role === 'viewer' && v === 'edit') v = 'view';
+    out[k] = u.role === 'admin' ? 'edit' : v;
+  }
+  return out;
+}
+const canReadCol = (u, col) => !READ_GATE[col] || READ_GATE[col].some(k => permsOf(u)[k] !== 'none');
+const canWriteCol = (u, col) => u.role === 'admin' || (WRITE_BY[col] || []).some(k => permsOf(u)[k] === 'edit');
 
 const json = (obj, status = 200, headers = {}) => new Response(JSON.stringify(obj), { status, headers: Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, headers) });
 const fail = (msg, status = 400) => json({ error: msg }, status);
@@ -38,8 +62,8 @@ async function hashPassword(password, saltHex) {
 function sameHex(a, b) { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; }
 const cleanUser = (s) => String(s || '').trim().toLowerCase();
 const validUser = (s) => /^[a-z0-9._-]{3,32}$/.test(s);
-const ROLES = ['admin', 'staff', 'viewer'];
-const pubUser = (u) => ({ username: u.username, name: u.name || u.username, role: u.role, active: !!u.active, created: u.created || '', lastLogin: u.last_login || '' });
+const ROLES = ['admin', 'staff', 'viewer', 'user'];
+const pubUser = (u) => ({ username: u.username, name: u.name || u.username, role: u.role, perms: permsOf(u), active: !!u.active, created: u.created || '', lastLogin: u.last_login || '' });
 
 function cookieOf(req) {
   const m = (req.headers.get('cookie') || '').match(new RegExp('(?:^|;\\s*)' + COOKIE + '=([a-f0-9]{64})'));
@@ -141,7 +165,7 @@ export async function onRequest(ctx) {
       if (method === 'POST') {
         const b = await readBody(req), username = cleanUser(b.username);
         if (!validUser(username)) return fail('اسم المستخدم من 3 إلى 32 حرفًا إنجليزيًا أو رقمًا (مسموح . _ -).');
-        const role = ROLES.includes(b.role) ? b.role : 'staff';
+        const role = ROLES.includes(b.role) ? b.role : 'user';
         const old = await db.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();
         const active = b.active === false ? 0 : 1;
         if (old && old.username === me.username && (role !== 'admin' || !active)) return fail('لا يمكنك سحب صلاحية المدير من حسابك أو إيقافه.');
@@ -149,13 +173,15 @@ export async function onRequest(ctx) {
         if (!old && pw.length < 8) return fail('كلمة المرور 8 أحرف على الأقل.');
         if (pw && pw.length < 8) return fail('كلمة المرور 8 أحرف على الأقل.');
         const name = String(b.name || '').trim() || username;
+        const perms = {}; if (b.perms && typeof b.perms === 'object') for (const k of PERM_KEYS) if (['none', 'view', 'edit'].includes(b.perms[k])) perms[k] = b.perms[k];
+        const permsText = JSON.stringify(perms);
         if (old) {
-          await db.prepare('UPDATE users SET name = ?, role = ?, active = ? WHERE username = ?').bind(name, role, active, username).run();
+          await db.prepare('UPDATE users SET name = ?, role = ?, active = ?, perms = ? WHERE username = ?').bind(name, role, active, permsText, username).run();
           if (pw) { const salt = randHex(16); await db.prepare('UPDATE users SET salt = ?, hash = ?, fails = 0, locked_until = 0 WHERE username = ?').bind(salt, await hashPassword(pw, salt), username).run(); }
           if (pw || !active || role !== old.role) await db.prepare('DELETE FROM sessions WHERE username = ?').bind(username).run();
         } else {
           const salt = randHex(16);
-          await db.prepare('INSERT INTO users (username, name, role, salt, hash, active, created) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(username, name, role, salt, await hashPassword(pw, salt), active, new Date().toISOString()).run();
+          await db.prepare('INSERT INTO users (username, name, role, salt, hash, active, created, perms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(username, name, role, salt, await hashPassword(pw, salt), active, new Date().toISOString(), permsText).run();
         }
         return json({ ok: true });
       }
@@ -174,18 +200,20 @@ export async function onRequest(ctx) {
         ? await db.prepare('SELECT path, col, data, deleted, updated FROM docs WHERE updated > ? AND col NOT IN (?, ?) ORDER BY updated').bind(since, HEAVY[0], HEAVY[1]).all()
         : await db.prepare('SELECT path, col, data, deleted, updated FROM docs WHERE deleted = 0 AND col NOT IN (?, ?)').bind(HEAVY[0], HEAVY[1]).all();
       const m = await db.prepare('SELECT MAX(updated) AS m FROM docs').first();
-      return json({ now: (m && m.m) || 0, docs: r.results.map(x => ({ p: x.path, d: x.deleted ? null : JSON.parse(x.data) })) });
+      return json({ now: (m && m.m) || 0, me: pubUser(me), docs: r.results.filter(x => canReadCol(me, x.col)).map(x => ({ p: x.path, d: x.deleted ? null : JSON.parse(x.data) })) });
     }
     if (route === 'doc') {
       const path = url.searchParams.get('p') || '';
       if (!PATH_RE.test(path)) return fail('مسار غير صالح.');
       const col = path.split('/')[0];
+      if (!canReadCol(me, col)) return fail('ليست لديك صلاحية على هذه الصفحة.', 403);
       if (method === 'GET') {
         const x = await db.prepare('SELECT data FROM docs WHERE path = ? AND deleted = 0').bind(path).first();
         return json({ exists: !!x, data: x ? JSON.parse(x.data) : null });
       }
       if (!canWrite) return fail('ليست لديك صلاحية التعديل.', 403);
       if (!isAdmin && ADMIN_ONLY_WRITE.some(r => r.test(path))) return fail('هذا الإجراء لمدير البرنامج فقط.', 403);
+      if (!canWriteCol(me, col)) return fail('ليست لديك صلاحية التعديل في هذه الصفحة.', 403);
       if (method === 'PUT' || method === 'PATCH') {
         const b = await readBody(req);
         if (!b || typeof b.data !== 'object' || Array.isArray(b.data) || b.data === null) return fail('بيانات غير صالحة.');
