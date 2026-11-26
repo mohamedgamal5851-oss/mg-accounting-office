@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-26 20:10">
+<meta name="of-build" content="2026-11-26 20:15">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -121,6 +121,20 @@ td.n { white-space: nowrap; text-align: end; }
 .modal.pdfv { max-width: 980px; width: 96vw; }
 .sp-pages { display: flex; flex-direction: column; gap: 12px; max-height: 72vh; overflow: auto; background: var(--bg); padding: 10px; border-radius: 10px; }
 .sp-pages canvas { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.12); border-radius: 4px; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12.5px; color: var(--muted); margin: 3px 0 1px; }
+.crumbs a { color: var(--muted); text-decoration: none; border-radius: 5px; padding: 0 3px; }
+.crumbs a:hover { color: var(--accent); background: var(--accent-soft); }
+.crumbs i { font-style: normal; opacity: .55; padding: 0 2px; }
+.crumbs span[aria-current] { color: var(--ink); font-weight: 600; padding: 0 3px; }
+#nav-dd { position: fixed; z-index: 60; min-width: 220px; max-width: 320px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.16); padding: 6px; display: none; flex-direction: column; }
+#nav-dd.show { display: flex; animation: ddIn .12s ease-out; }
+@keyframes ddIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+#nav-dd a { display: block; padding: 8px 12px; border-radius: 7px; color: var(--ink); text-decoration: none; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#nav-dd a:hover, #nav-dd a:focus-visible { background: var(--accent-soft); color: var(--accent); outline: none; }
+#nav-dd a.on { font-weight: 700; }
+#nav-dd a.act { color: var(--accent); }
+#nav-dd hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+@media (prefers-reduced-motion: reduce) { #nav-dd.show { animation: none; } }
 .bulk select { padding: 4px 8px; font-size: 12.5px; }
 .side .foot { margin-top: auto; font-size: 12px; opacity: .8; padding: 0 8px; display: flex; flex-direction: column; gap: 8px; }
 .side .foot button { background: rgba(255,255,255,.1); border: 0; border-radius: 6px; padding: 6px 10px; color: #fff; cursor: pointer; align-self: flex-start; }

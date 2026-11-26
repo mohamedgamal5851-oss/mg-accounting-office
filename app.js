@@ -134,6 +134,77 @@
     edge.onmouseleave = () => clearTimeout(hoverTimer);
     $('#side').onmouseleave = () => { if (!pinned && hoverOpened) { hoverOpened = false; $('#side').classList.remove('open'); } };
   }
+  /* top bar menus: hovering a tab opens its useful pages and actions (Odoo-style) */
+  const TASK_TABS = [['overdue', 'المتأخرة'], ['soon', 'تستحق قريبًا'], ['open', 'كل المفتوحة'], ['waiting', 'بانتظار العميل'], ['done', 'المنجزة']];
+  function navMenu(k) {
+    const W = writable(), A = (label, act, data) => W ? { label, act, data: data || {} } : null, L = (label, href) => ({ label, href });
+    const M = {
+      dashboard: [L('لوحة التحكم', '#dashboard'), L('الإجراءات المتأخرة', '#tasks-overdue'), L('أرصدة العملاء وأعمار الديون', '#reports-balances')],
+      clients: [L('قائمة العملاء', '#clients'), A('+ عميل جديد', 'add-client'), L('استيراد العملاء من Excel', '#setup')],
+      finance: [L('كل الحركات المالية', '#finance'), A('+ تسجيل تحصيل', 'add-tx', { kind: 'payment' }), A('+ مطالبة أتعاب', 'add-tx', { kind: 'fee' }), A('+ مصروف', 'add-tx', { kind: 'expense' }), A('إصدار مطالبات الشهر من العقود', 'gen-fees')],
+      tasks: TASK_TABS.map(([t, l]) => L(l, '#tasks-' + t)).concat([A('+ إجراء جديد', 'add-task')]),
+      contracts: [L('كل العقود', '#contracts'), A('+ عقد جديد', 'add-contract')],
+      certs: [L('سجل الشهادات', '#certs'), A('+ شهادة دخل', 'add-cert'), A('+ شهادة رأس مال', 'add-capcert')],
+      reports: REPORTS.map(([r, l]) => L(l, '#reports-' + r)),
+      backup: [S.downloads ? A('⤓ تنزيل نسخة احتياطية', 'backup') : null, L('استرجاع نسخة احتياطية', '#backup')],
+      setup: [L('الإعدادات', '#setup'), A('+ موظف', 'add-staff')]
+    };
+    const v = window.OFVat && window.OFVat.navMenu ? window.OFVat.navMenu(k, W) : null;
+    return (v || M[k] || []).filter(Boolean);
+  }
+  let ddTimer = 0;
+  function closeNavMenu() { clearTimeout(ddTimer); const d = $('#nav-dd'); if (d) d.classList.remove('show'); }
+  function openNavMenu(a) {
+    const items = navMenu(a.dataset.k); if (!items.length || window.innerWidth <= 900) return closeNavMenu();
+    let d = $('#nav-dd');
+    if (!d) {
+      d = document.createElement('div'); d.id = 'nav-dd'; d.setAttribute('role', 'menu'); document.body.appendChild(d);
+      d.onmouseenter = () => clearTimeout(ddTimer); d.onmouseleave = () => { ddTimer = setTimeout(closeNavMenu, 180); };
+      d.addEventListener('click', () => setTimeout(closeNavMenu, 0));
+    }
+    const firstAct = items.findIndex(x => !x.href && !x.nav);
+    d.innerHTML = items.map((x, i) => (i === firstAct && i > 0 ? '<hr>' : '') + (x.href ? '<a role="menuitem" href="' + x.href + '"' + (location.hash === x.href ? ' class="on"' : '') + '>' + esc(x.label) + '</a>' :
+      '<a role="menuitem" href="#" data-act="' + x.act + '"' + Object.entries(x.data).map(([k2, v2]) => ' data-' + k2 + '="' + esc(v2) + '"').join('') + (x.nav ? '>' : ' class="act">') + esc(x.label) + '</a>')).join('');
+    const r = a.getBoundingClientRect();
+    d.style.top = (r.bottom + 6) + 'px';
+    d.classList.add('show');
+    const w = d.offsetWidth; d.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) + 'px';
+  }
+  function bindNavMenus() {
+    $$('#nav a[data-k]').forEach(a => {
+      a.onmouseenter = () => { clearTimeout(ddTimer); ddTimer = setTimeout(() => openNavMenu(a), 120); };
+      a.onmouseleave = () => { clearTimeout(ddTimer); ddTimer = setTimeout(closeNavMenu, 220); };
+      a.onfocus = () => openNavMenu(a);
+    });
+  }
+  window.addEventListener('hashchange', closeNavMenu);
+  window.addEventListener('scroll', closeNavMenu, true);
+
+  /* where am I: الأقسام › section › page › item, shown under the page title */
+  function crumbs() {
+    const cp = currentPage(), page = cp.page;
+    if (page === 'home') return [];
+    const mod = moduleOf(page), label = (k) => (mod.nav.find(n => n[0] === k) || [])[1];
+    const out = [['الأقسام', '#home'], [mod.name, '#' + mod.home]];
+    if (page === 'vat' && window.OFVat && window.OFVat.crumbs) out.push(...window.OFVat.crumbs(cp.sub));
+    else if (page === 'client') {
+      out.push([label('clients') || 'العملاء', '#clients']);
+      const c = S.M && S.M.clientById.get(cp.sub);
+      if (c) out.push([c.name, '#client-statement-' + c.id]);
+      const tl = { statement: 'كشف الحساب', tasks: 'الإجراءات', contracts: 'العقود والأتعاب', info: 'البيانات والمستندات', access: 'بيانات المنظومات' }[cp.extra];
+      if (tl) out.push([tl, '']);
+    } else if (page !== mod.home) {
+      out.push([label(page) || '', '#' + page]);
+      if (page === 'reports') { const r = REPORTS.find(x => x[0] === (cp.sub || 'balances')); if (r) out.push([r[1], '']); }
+      if (page === 'tasks') { const t = TASK_TABS.concat([['all', 'الكل']]).find(x => x[0] === (cp.sub || 'open')); if (t) out.push([t[1], '']); }
+    }
+    return out.filter(x => x[0]);
+  }
+  function crumbHtml() {
+    const c = crumbs(); if (!c.length) return '';
+    return '<nav class="crumbs" aria-label="موقعك في البرنامج">' + c.map((x, i) => i === c.length - 1 || !x[1] ? '<span' + (i === c.length - 1 ? ' aria-current="page"' : '') + '>' + esc(x[0]) + '</span>' : '<a href="' + x[1] + '">' + esc(x[0]) + '</a>').join('<i>›</i>') + '</nav>';
+  }
+
   /* top bar: a highlight slides from the previous page's tab to the new one, and the page enters from that side */
   let navIdx = -1;
   function placeNavIndicator() {
@@ -163,12 +234,12 @@
     const badge = { tasks: A ? A.overdue.length : 0 };
     const on = (k) => page === 'vat' ? (k === 'vat-rep' ? /^rep/.test(cp.sub) : k === 'vat-parties' ? /^parties/.test(cp.sub) : k === 'vat-list' ? /^(list|ret)/.test(cp.sub) : k === 'vat' && !cp.sub) : (page === k || (page === 'client' && k === 'clients'));
     const items = mod ? mod.nav : MODULES.map(m => [m.home, m.name, m.icon]);
-    $('#nav').innerHTML = '<a href="#home" class="apps' + (page === 'home' ? ' on' : '') + '">' + svgIcon('apps') + '<span>' + (mod ? 'جميع الوحدات' : 'الوحدات') + '</span></a>' +
+    $('#nav').innerHTML = '<a href="#home" class="apps' + (page === 'home' ? ' on' : '') + '">' + svgIcon('apps') + '<span>' + (mod ? 'جميع الأقسام' : 'الأقسام') + '</span></a>' +
       (mod ? '<div class="nav-mod">' + esc(mod.name) + '</div>' : '') +
       items.map(([k, label, ic]) => k === 'f41' ? '<a class="soon" aria-disabled="true">' + svgIcon(k) + '<span>' + esc(label) + '</span></a>' :
-        '<a href="#' + k + '" class="' + (mod && on(k) ? 'on' : '') + '">' + svgIcon(ic || k) + '<span>' + esc(label) + '</span>' +
+        '<a href="#' + k + '" data-k="' + k + '" class="' + (mod && on(k) ? 'on' : '') + '">' + svgIcon(ic || k) + '<span>' + esc(label) + '</span>' +
         (badge[k] ? '<span class="badge" title="إجراءات متأخرة">' + badge[k] + '</span>' : '') + '</a>').join('');
-    placeNavIndicator();
+    placeNavIndicator(); bindNavMenus();
     const build = (document.querySelector('meta[name=of-build]') || {}).content || '';
     $('#as-of').textContent = 'اليوم: ' + C.todayISO() + (build ? ' · الإصدار ' + build : '');
     $('.logo span').textContent = mod ? mod.name : 'إدارة المكتب';
@@ -196,10 +267,12 @@
   const go = (h) => { if (location.hash === '#' + h) route(); else location.hash = h; };
 
   function topBar(title, sub, actions) {
-    const home = currentPage().page === 'home';
+    const cp = currentPage(), home = cp.page === 'home', mod = moduleOf(cp.page);
+    const atModHome = mod && ((cp.page === mod.home && !cp.sub) || (cp.page === 'vat' && !cp.sub));
+    const tip = atModHome ? 'العودة إلى الأقسام' : 'العودة إلى الصفحة الرئيسية لقسم ' + (mod ? mod.name : '');
     return '<div class="top"><button type="button" class="btn menu-btn" data-act="menu">☰ القائمة</button><div>' +
-      (home ? '<h1>' + esc(title) + '</h1>' : '<h1><button type="button" class="to-mods" data-act="to-mods" title="العودة إلى الوحدات"><span class="to-mods-ic">' + svgIcon('apps') + '</span>' + esc(title) + '</button></h1>') +
-      (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div><div class="grow"></div>' + (actions || '') + '</div>' +
+      (home ? '<h1>' + esc(title) + '</h1>' : '<h1><button type="button" class="to-mods" data-act="to-mods" title="' + esc(tip) + '"><span class="to-mods-ic">' + svgIcon(atModHome ? 'apps' : 'dashboard') + '</span>' + esc(title) + '</button></h1>') +
+      crumbHtml() + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div><div class="grow"></div>' + (actions || '') + '</div>' +
       (S.db && S.canWrite === false ? '<div class="ro-banner">يمكنك عرض البيانات فقط، والتعديل متاح لأصحاب صلاحية التعديل.</div>' : '');
   }
   const actBtn = (act, label, cls, extra) => writable() ? '<button type="button" class="btn ' + (cls || '') + '" data-act="' + act + '"' + (extra || '') + '>' + esc(label) + '</button>' : '';
@@ -276,7 +349,7 @@
     const vat = window.OFVat ? window.OFVat.homeStats() : null;
     const stat = { office: int(M.active.length) + ' عميل نشط' + (A.overdue.length ? ' · ' + int(A.overdue.length) + ' إجراء متأخر' : ''),
       tax: vat ? int(vat.open) + ' إقرار تحت الإعداد' + (vat.diff ? ' · ' + int(vat.diff) + ' به فروق' : '') : '' };
-    let h = topBar(settings().officeName || 'مكتب المحاسبة', 'اختر الوحدة') + '<div class="content"><div class="mods">';
+    let h = topBar(settings().officeName || 'مكتب المحاسبة', 'اختر القسم') + '<div class="content"><div class="mods">';
     for (const [i, m] of MODULES.entries()) h += '<a class="mod" style="--i:' + i + '" href="#' + m.home + '" data-act="open-mod" data-to="' + m.home + '"><span class="mod-ic">' + svgIcon(m.icon) + '</span><b>' + esc(m.name) + '</b><small>' + esc(m.desc) + '</small><span class="mod-stat">' + esc(stat[m.id] || '') + '</span></a>';
     return h + '</div></div>';
   }
@@ -2061,7 +2134,7 @@
         case 'cred-show': { const k = el.dataset.key; if (V.shown.has(k)) V.shown.delete(k); else V.shown.add(k); return renderPage(); }
         default: if (window.OFVat && a.indexOf('vat-') === 0) return window.OFVat.act(a, el);
           break;
-        case 'to-mods': return leaveTo('home');
+        case 'to-mods': { const cp = currentPage(), mod = moduleOf(cp.page); const atHome = !mod || (cp.page === mod.home && !cp.sub) || (cp.page === 'vat' && !cp.sub); return leaveTo(atHome ? 'home' : mod.home); }
         case 'open-mod': return leaveTo(el.dataset.to, el);
         case 'cred-copy': return navigator.clipboard.writeText(credValue(el.dataset.key)).then(() => toast('تم النسخ'), () => toast('تعذّر النسخ', true));
       }

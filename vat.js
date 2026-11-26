@@ -217,7 +217,7 @@
     h += '<div class="toolbar"><select data-ui="dYear">' + options(years, y) + '</select><select data-ui="dClient">' + options(A.clientOptions(true), ui.dClient, 'جميع الشركات') + '</select>' +
       '<select data-ui="dStaff">' + options(S.M.staff.filter(x => x.active !== false).map(x => [x.id, x.name]), ui.dStaff, 'جميع الموظفين') + '</select>' +
       (ui.dClient || ui.dStaff ? '<button type="button" class="btn sm" data-act="vat-dash-clear">إلغاء التصفية</button>' : '') + '</div>';
-    if (!cl.length) return h + '<div class="card"><div class="hero-empty"><h2>لا توجد شركات مسجلة في ضريبة القيمة المضافة</h2><p>فعّل خيار «مسجل في ضريبة القيمة المضافة» في بيانات الشركة من وحدة حسابات وإجراءات الشركات، أو أنشئ أول إقرار من «+ إقرار جديد».</p></div></div></div>';
+    if (!cl.length) return h + '<div class="card"><div class="hero-empty"><h2>لا توجد شركات مسجلة في ضريبة القيمة المضافة</h2><p>فعّل خيار «مسجل في ضريبة القيمة المضافة» في بيانات الشركة من قسم حسابات وإجراءات الشركات، أو أنشئ أول إقرار من «+ إقرار جديد».</p></div></div></div>';
 
     // 1) this cycle: the period whose deadline falls this month
     const cycle = C.addMonths(S.M.ym, -1);
@@ -1068,6 +1068,8 @@
       case 'vat-pick': ui.vClient = el.dataset.client; return A.go('vat-list');
       case 'vat-dash-clear': ui.dClient = ''; ui.dStaff = ''; return A.renderPage();
       case 'vat-bulk': return r ? bulk(r, el.dataset.op) : null;
+      case 'vat-list-status': ui.vStatus = el.dataset.v; return A.go('vat-list');
+      case 'vat-book': ui.rbSide = el.dataset.v; return A.go('vat-rep-books');
       case 'vat-multi': return r && A.writable() ? openMultiSales(r) : null;
       case 'vat-undo': return r ? undo(r.id) : null;
       case 'vat-filter': ui.vStatus = ui.vStatus === el.dataset.v ? '' : el.dataset.v; return A.renderPage();
@@ -1100,6 +1102,25 @@
     }
   }
 
+  /* top bar menus and the «where am I» trail for this section */
+  function navMenu(k, W) {
+    const L = (label, href) => ({ label, href }), A = (label, act, data) => W ? { label, act, data: data || {} } : null;
+    if (k === 'vat') return [L('لوحة الإقرارات', '#vat'), A('+ إقرار جديد', 'vat-new')];
+    if (k === 'vat-list') return [L('جميع الإقرارات', '#vat-list'), { label: 'المسودات', nav: 1, act: 'vat-list-status', data: { v: 'draft' } }, { label: 'جاهزة للتقديم', nav: 1, act: 'vat-list-status', data: { v: 'ready' } },
+      { label: 'مقدَّمة ومطابقة', nav: 1, act: 'vat-list-status', data: { v: 'matched' } }, { label: 'مقدَّمة وبها فروق', nav: 1, act: 'vat-list-status', data: { v: 'diff' } }, A('+ إقرار جديد', 'vat-new')];
+    if (k === 'vat-rep') return REPS.map(([r, l]) => L(l, '#vat-rep-' + r)).concat([{ label: 'دفتر المبيعات', nav: 1, act: 'vat-book', data: { v: 'S' } }, { label: 'دفتر المشتريات والمصروفات', nav: 1, act: 'vat-book', data: { v: 'P' } }]).filter(x => x.href !== '#vat-rep-books');
+    if (k === 'vat-parties') return [L('الموردون والعملاء', '#vat-parties')];
+    return null;
+  }
+  function crumbs(sub) {
+    const p = parse(sub);
+    if (p.view === 'dash') return [];
+    if (p.view === 'list') return [['إقرارات القيمة المضافة', '#vat-list']];
+    if (p.view === 'rep') return [['تقارير الإقرارات', '#vat-rep'], [(REPS.find(x => x[0] === p.key) || REPS[0])[1], '']];
+    if (p.view === 'parties') return [['الموردون والعملاء', '']];
+    const r = retById(p.id);
+    return [['إقرارات القيمة المضافة', '#vat-list']].concat(r ? [[A.clientName(r.client) + ' – ' + periodLabel(r), '#vat-ret-sum-' + r.id], [(TABS.find(t => t[0] === p.tab) || TABS[0])[1], '']] : []);
+  }
   function homeStats() {
     if (!S.M) return { open: 0, diff: 0 }; const all = rets(); return { open: all.filter(r => !r.sub).length, diff: all.filter(r => statusOf(r) === 'diff').length }; }
 
@@ -1109,5 +1130,5 @@
     const r = cur(); if (!r || !A.writable()) return;
     ev.preventDefault(); undo(r.id);
   });
-  window.OFVat = { page, bind, act, allChunks, allFiles, homeStats, resetCache: () => { VS.cache.clear(); VS.undo.clear(); VS.sel.clear(); } };
+  window.OFVat = { page, bind, act, allChunks, allFiles, homeStats, navMenu, crumbs, resetCache: () => { VS.cache.clear(); VS.undo.clear(); VS.sel.clear(); } };
 })();
