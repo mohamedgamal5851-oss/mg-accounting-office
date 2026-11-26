@@ -172,9 +172,11 @@
   }
   function bindNavMenus() {
     $$('#nav a[data-k]').forEach(a => {
-      a.onmouseenter = () => { clearTimeout(ddTimer); ddTimer = setTimeout(() => openNavMenu(a), 120); };
+      // the menu opens only when the pointer rests on the tab (1 s); a click just opens the page
+      a.onmouseenter = () => { clearTimeout(ddTimer); ddTimer = setTimeout(() => openNavMenu(a), 1000); };
       a.onmouseleave = () => { clearTimeout(ddTimer); ddTimer = setTimeout(closeNavMenu, 220); };
-      a.onfocus = () => openNavMenu(a);
+      a.onmousedown = () => closeNavMenu();
+      a.onkeydown = (ev) => { if (ev.key === 'ArrowDown') { ev.preventDefault(); openNavMenu(a); const f = $('#nav-dd a'); if (f) f.focus(); } };
     });
   }
   window.addEventListener('hashchange', closeNavMenu);
