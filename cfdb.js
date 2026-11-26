@@ -7,7 +7,8 @@
   const host = location.hostname;
   const forced = /[?&]cf=1\b/.test(location.search);
   const local = location.protocol === 'file:' || /[?&]local=1\b/.test(location.search);
-  if (window.claude || local || (!forced && (!/^https?:$/.test(location.protocol) || /claude|anthropic|usercontent|localhost|127\.0\.0\.1/i.test(host)))) return;
+  let framed = false; try { framed = window.top !== window.self; } catch (e) { framed = true; }   // claude.ai shows the program inside a frame
+  if (window.claude || local || (framed && !forced) || (!forced && (!/^https?:$/.test(location.protocol) || /claude|anthropic|usercontent|localhost|127\.0\.0\.1/i.test(host)))) return;
 
   const HEAVY = ['vatInvoices', 'vatFiles'];
   const POLL_MS = 5000, OVERLAP_MS = 30000;
