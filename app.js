@@ -88,6 +88,7 @@
     contracts: '<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5M14 3v5h5"/>',
     vat: '<path d="M7 3h10l3 3v15H4V3h3"/><path d="M8 8h8M8 12h3M13 12h3M8 16h3M13 16h3"/>',
     certs: '<path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/>',
+    feecalc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M12 11h2M8 15h2M12 15h2M8 18h2M12 18h4M16 14v4"/>',
     reports: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     backup: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/>',
     'vat-list': '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
@@ -100,7 +101,7 @@
   /* the program is split into modules (like Odoo apps): each has its own menu; the clients file is shared */
   const MODULES = [
     { id: 'office', name: 'حسابات وإجراءات الشركات', desc: 'العملاء والأتعاب والتحصيل، الإجراءات والمواعيد، العقود والشهادات والتقارير', icon: 'clients', home: 'dashboard',
-      nav: [['dashboard', 'لوحة التحكم'], ['clients', 'العملاء'], ['finance', 'الحركات المالية'], ['tasks', 'الإجراءات والمواعيد'], ['contracts', 'العقود والأتعاب'], ['certs', 'الشهادات'], ['reports', 'التقارير'], ['backup', 'النسخ الاحتياطي'], ['setup', 'الإعدادات']] },
+      nav: [['dashboard', 'لوحة التحكم'], ['clients', 'العملاء'], ['finance', 'الحركات المالية'], ['tasks', 'الإجراءات والمواعيد'], ['contracts', 'العقود والأتعاب'], ['certs', 'الشهادات'], ['feecalc', 'حاسبة رسوم التأسيس'], ['reports', 'التقارير'], ['backup', 'النسخ الاحتياطي'], ['setup', 'الإعدادات']] },
     { id: 'tax', name: 'الإقرارات الضريبية', desc: 'إقرارات القيمة المضافة: تحليل فواتير البيع والشراء، ملفات الرفع على المنظومة، ومطابقة الإقرار بعد تقديمه', icon: 'vat', home: 'vat',
       nav: [['vat', 'لوحة الإقرارات'], ['vat-list', 'إقرارات القيمة المضافة'], ['clients', 'بيانات العملاء'], ['backup', 'النسخ الاحتياطي'], ['vat-rep', 'تقارير الإقرارات'], ['vat-parties', 'الموردون والعملاء'], ['f41', 'نموذج 41 (قريبًا)']] }
   ];
@@ -250,7 +251,7 @@
     document.title = (settings().officeName || 'مكتب المحاسبة') + ' – إدارة المكتب';
   }
 
-  const PAGES = ['home', 'backup', 'dashboard', 'clients', 'client', 'finance', 'tasks', 'vat', 'contracts', 'certs', 'reports', 'setup'];
+  const PAGES = ['home', 'backup', 'dashboard', 'clients', 'client', 'finance', 'tasks', 'vat', 'contracts', 'certs', 'feecalc', 'reports', 'setup'];
   function currentPage() {
     // hashes: #page, #page-sub, or #client-<tab>-<client id> (the id may itself contain hyphens)
     const parts = decodeURIComponent((location.hash || '#home').slice(1)).split('-');
@@ -304,6 +305,7 @@
     else if (page === 'vat') h = window.OFVat ? window.OFVat.page(sub) : '';
     else if (page === 'contracts') h = pageContracts();
     else if (page === 'certs') h = pageCerts();
+    else if (page === 'feecalc') h = pageFeeCalc();
     else if (page === 'reports') h = pageReports(sub || 'balances');
     else if (page === 'setup') h = pageSettings();
     main.innerHTML = h;
@@ -2091,6 +2093,149 @@
     rd.readAsText(file);
   }
 
+
+  /* ---------------- incorporation fee calculator (حاسبة رسوم التأسيس) ---------------- */
+  const LAW_NAME = { '72': 'قانون الاستثمار رقم 72 لسنة 2017', '159': 'قانون الشركات رقم 159 لسنة 1981' };
+  function feeInput() {
+    const u = S.ui;
+    return { law: u.fcLaw || '72', issued: u.fcIssued, paid: u.fcPaid, copy: !!u.fcCopy, industrial: !!u.fcInd, realEstate: !!u.fcRE };
+  }
+  function feeResult() { return C.setupFees(feeInput()); }
+  const officeFee = () => Number(S.ui.fcFee) || 0;
+
+  function pageFeeCalc() {
+    const u = S.ui, law = u.fcLaw || '72';
+    const ready = Number(u.fcIssued) > 0;
+    const r = ready ? feeResult() : null;
+    const chk = (key, label) => '<label><input type="checkbox" data-ui="' + key + '"' + (u[key] ? ' checked' : '') + '> ' + esc(label) + '</label>';
+    let h = topBar('حاسبة رسوم التأسيس', 'الشركات ذات المسؤولية المحدودة · وفق بيان الهيئة العامة للاستثمار والمناطق الحرة',
+      ready ? (S.downloads ? '<button type="button" class="btn primary" data-act="fc-pdf">⤓ PDF</button><button type="button" class="btn" data-act="fc-xlsx">⤓ Excel</button>' : '') + (writable() && u.fcClient ? '<button type="button" class="btn" data-act="fc-record">تسجيل على حساب العميل</button>' : '') : '') + '<div class="content">';
+    h += '<section class="card"><header><h2>بيانات الشركة</h2></header><div class="body"><div class="form">' +
+      '<div class="field"><label>القانون</label><select data-ui="fcLaw">' + options([['72', LAW_NAME['72']], ['159', LAW_NAME['159']]], law) + '</select></div>' +
+      '<div class="field"><label>اسم الشركة (اختياري)</label><input type="text" data-ui="fcName" data-live value="' + esc(u.fcName || '') + '"></div>' +
+      '<div class="field"><label>ربط بعميل (اختياري)</label><select data-ui="fcClient">' + options(clientOptions(true), u.fcClient || '', '—') + '</select></div>' +
+      '<div class="field"><label>رأس المال المصدر (جنيه)</label><input type="number" min="0" step="1" data-ui="fcIssued" data-live value="' + esc(u.fcIssued || '') + '"></div>' +
+      '<div class="field"><label>رأس المال المدفوع (جنيه) – فارغ = المصدر</label><input type="number" min="0" step="1" data-ui="fcPaid" data-live value="' + esc(u.fcPaid || '') + '"></div>' +
+      '<div class="field"><label>أتعاب المكتب (اختياري)</label><input type="number" min="0" step="1" data-ui="fcFee" data-live value="' + esc(u.fcFee || '') + '"></div>' +
+      '<div class="field full"><label>اختيارات</label><div class="checks">' + chk('fcCopy', 'صورة طبق الأصل من العقد والنظام الأساسي') +
+      (law === '159' ? chk('fcInd', 'نشاط صناعي (اتحاد الصناعات)') : '') + chk('fcRE', 'نشاط تسويق أو وساطة عقارية أو دعاية وإعلان') + '</div></div>' +
+      '</div></div></section>';
+    if (!r) return h + '<div class="card"><div class="empty">اكتب رأس المال المصدر لعرض الرسوم.</div></div></div>';
+    const paidNote = (u.fcPaid === '' || u.fcPaid == null) ? ' (يساوي المصدر)' : '';
+    h += '<div class="tiles"><div class="tile c1"><span>إجمالي الرسوم الحكومية</span><b>' + money(r.total) + '</b><small>' + esc(cur()) + '</small></div>' +
+      (officeFee() ? '<div class="tile c4"><span>أتعاب المكتب</span><b>' + money(officeFee()) + '</b><small>' + esc(cur()) + '</small></div><div class="tile c3"><span>الإجمالي المطلوب من العميل</span><b>' + money(r.total + officeFee()) + '</b><small>' + esc(cur()) + '</small></div>' : '') +
+      '<div class="tile c5"><span>رأس المال المصدر / المدفوع</span><b style="font-size:17px">' + money(r.issued) + '</b><small>المدفوع ' + money(r.paid) + paidNote + '</small></div></div>';
+    let prev = '';
+    h += '<section class="card"><header><h2>تفصيل الرسوم · ' + esc(LAW_NAME[r.law]) + '</h2></header><div class="tablewrap"><table><thead><tr><th>الجهة المستحقة</th><th>مسمى الرسم</th><th>طريقة الحساب</th><th class="n">المبلغ (' + esc(cur()) + ')</th></tr></thead><tbody>' +
+      r.rows.map(x => { const same = x.entity === prev; prev = x.entity; return '<tr><td>' + (same ? '' : '<strong>' + esc(x.entity) + '</strong>') + '</td><td>' + esc(x.name) + '</td><td><span class="sub">' + esc(x.basis) + '</span></td><td class="n">' + (x.amount ? money(x.amount) : '—') + '</td></tr>'; }).join('') +
+      '</tbody><tfoot><tr><td colspan="3">إجمالي الرسوم الحكومية</td><td class="n">' + money(r.total) + '</td></tr>' +
+      (officeFee() ? '<tr><td colspan="3">أتعاب المكتب</td><td class="n">' + money(officeFee()) + '</td></tr><tr><td colspan="3">الإجمالي المطلوب</td><td class="n">' + money(r.total + officeFee()) + '</td></tr>' : '') + '</tfoot></table></div></section>';
+    h += '<div class="note">الرسوم محسوبة وفق بيان الهيئة العامة للاستثمار والمناطق الحرة لرسوم ومقابل خدمات تأسيس الشركات ذات المسؤولية المحدودة. راجع الرسوم السارية قبل السداد؛ قد تتغير.</div>';
+    return h + '</div>';
+  }
+
+  function feeRowsForExport() {
+    const r = feeResult(); let prev = '';
+    const rows = r.rows.map(x => { const same = x.entity === prev; prev = x.entity; return [same ? '' : x.entity, x.name, x.basis, x.amount ? money(x.amount) : '—']; });
+    const totals = [['إجمالي الرسوم الحكومية', money(r.total)]];
+    if (officeFee()) totals.push(['أتعاب المكتب', money(officeFee())], ['الإجمالي المطلوب', money(r.total + officeFee())]);
+    return { r, rows, totals };
+  }
+  function feeXlsx() {
+    const { r } = feeRowsForExport();
+    const rows = [['الجهة المستحقة', 'مسمى الرسم', 'طريقة الحساب', 'المبلغ']].concat(r.rows.map(x => [x.entity, x.name, x.basis, x.amount])).concat([['إجمالي الرسوم الحكومية', '', '', r.total]]);
+    if (officeFee()) rows.push(['أتعاب المكتب', '', '', officeFee()], ['الإجمالي المطلوب', '', '', r.total + officeFee()]);
+    xlsxBook(fileName('رسوم تأسيس ' + (S.ui.fcName || 'شركة')) + '.xlsx', [{ name: 'رسوم التأسيس', ctx: LAW_NAME[r.law] + ' · رأس المال المصدر ' + money(r.issued) + ' · المدفوع ' + money(r.paid), rows }]);
+  }
+
+  /* One-page A4 statement drawn on canvas (right-to-left text drawn by the browser, so brackets and colons stay in order). */
+  async function feePdf() {
+    if (!window.html2pdf) return toast('يتطلب تنزيل PDF اتصالًا بالإنترنت عند فتح الصفحة. اتصل ثم أعد تحميل الصفحة.', true);
+    toast('جارٍ إعداد الملف…');
+    if (document.fonts) { await Promise.all(['400 12pt "IBM Plex Sans Arabic"', '700 12pt "IBM Plex Sans Arabic"', '400 10pt Roboto'].map(f => document.fonts.load(f, 'رسوم 123').catch(() => null))); await document.fonts.ready; }
+    const { r, rows, totals } = feeRowsForExport();
+    const s = settings(), cs = certSettings();
+    const W = 1654, H = Math.floor(W * 297 / 210), K = W / 210, PT = 0.3528 * K, mm = (v) => v * K;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+    const F = (size, w) => (w || 400) + ' ' + (size * PT) + 'px "IBM Plex Sans Arabic", Arial, sans-serif';
+    const L = mm(15), R = W - mm(15);
+    // letterhead
+    if (window.OF_LOGO) { const logo = await loadImg(window.OF_LOGO.dark); const lw = mm(42); g.drawImage(logo, L, mm(12), lw, lw * logo.height / logo.width); }
+    g.direction = 'rtl'; g.textBaseline = 'middle'; g.textAlign = 'right'; g.fillStyle = '#1a1a1a';
+    g.font = F(13, 700); g.fillText(cs.officeLine || s.officeName || '', R, mm(18));
+    g.font = F(9.5); g.fillStyle = '#666'; g.fillText([cs.signerTitle, cs.signerName].filter(Boolean).join(' · '), R, mm(24));
+    g.fillStyle = '#1c1c1c'; g.fillRect(L, mm(36), R - L, mm(0.9)); g.fillStyle = cs.color || '#00be62'; g.fillRect(L, mm(36), (R - L) * 0.3, mm(0.9));
+    // title + info
+    g.fillStyle = '#1a1a1a'; g.textAlign = 'center'; g.font = F(17, 700); g.fillText('بيان رسوم تأسيس شركة ذات مسؤولية محدودة', W / 2, mm(47));
+    g.font = F(10); g.fillStyle = '#555'; g.fillText(LAW_NAME[r.law], W / 2, mm(54));
+    const info = [['اسم الشركة', S.ui.fcName || (S.ui.fcClient ? clientName(S.ui.fcClient) : '—')], ['التاريخ', C.todayISO()], ['رأس المال المصدر', money(r.issued) + ' جنيه'], ['رأس المال المدفوع', money(r.paid) + ' جنيه']];
+    g.strokeStyle = '#dcdcdc'; g.lineWidth = mm(0.3); g.strokeRect(L, mm(60), R - L, mm(18));
+    g.font = F(10.5); g.textAlign = 'right';
+    info.forEach(([k, v], i) => {
+      const colX = i % 2 === 0 ? R - mm(4) : L + (R - L) / 2 - mm(4), y = mm(65) + Math.floor(i / 2) * mm(8);
+      g.fillStyle = '#666'; g.fillText(k + ':', colX, y); const kw = g.measureText(k + ': ').width;
+      g.fillStyle = '#1a1a1a'; g.font = F(10.5, 700); g.fillText(v, colX - kw, y); g.font = F(10.5);
+    });
+    // table (columns right to left)
+    const cols = [{ h: 'الجهة المستحقة', w: 44 }, { h: 'مسمى الرسم', w: 50 }, { h: 'طريقة الحساب', w: 60 }, { h: 'المبلغ (جنيه)', w: 26 }];
+    const fs = 9.5, lh = fs * PT * 1.55, pad = mm(2.2);
+    const wrapIn = (text, width) => {
+      const words = String(text).split(/\s+/).filter(Boolean), out = []; let curL = '';
+      for (const w of words) { const t = curL ? curL + ' ' + w : w; if (g.measureText(t).width <= width || !curL) curL = t; else { out.push(curL); curL = w; } }
+      if (curL) out.push(curL); return out.length ? out : [''];
+    };
+    let y = mm(84);
+    const drawRow = (cells, opts) => {
+      g.font = F(fs, opts.bold ? 700 : 400);
+      const wrapped = cells.map((c, i) => wrapIn(c, mm(cols[i].w) - pad * 2));
+      const hgt = Math.max(...wrapped.map(w => w.length)) * lh + pad * 1.6;
+      if (opts.fill) { g.fillStyle = opts.fill; g.fillRect(L, y, R - L, hgt); }
+      let x = R;
+      wrapped.forEach((ls, i) => {
+        const cw = mm(cols[i].w);
+        g.fillStyle = opts.color || (i === 2 ? '#555' : '#1a1a1a');
+        const num = i === 3;
+        g.textAlign = num ? 'left' : 'right';
+        ls.forEach((t, k) => g.fillText(t, num ? x - cw + pad : x - pad, y + pad * 0.8 + lh * (k + 0.5)));
+        x -= cw;
+      });
+      g.strokeStyle = '#e3e3e1'; g.lineWidth = mm(0.25); g.beginPath(); g.moveTo(L, y + hgt); g.lineTo(R, y + hgt); g.stroke();
+      y += hgt;
+    };
+    drawRow(cols.map(c => c.h), { bold: true, fill: '#2b2b2b', color: '#fff' });
+    rows.forEach((row, i) => drawRow(row, { fill: i % 2 ? '#f7f7f6' : null }));
+    totals.forEach(([k, v], i) => drawRow([k, '', '', v], { bold: true, fill: i === totals.length - 1 ? '#ececeb' : '#f3f3f2' }));
+    // note + footer
+    y += mm(6); g.textAlign = 'right'; g.fillStyle = '#666'; g.font = F(9);
+    wrapIn('الرسوم محسوبة وفق بيان الهيئة العامة للاستثمار والمناطق الحرة لرسوم ومقابل خدمات تأسيس الشركات ذات المسؤولية المحدودة، وهي قابلة للتغيير وفقًا للقرارات السارية وقت السداد.', R - L).forEach(t => { g.fillText(t, R, y); y += fs * PT * 1.5; });
+    g.direction = 'ltr'; g.textAlign = 'center'; g.fillStyle = '#444'; g.font = '400 ' + (8.5 * PT) + 'px Roboto, Arial, sans-serif';
+    g.fillStyle = '#1c1c1c'; g.fillRect(L, H - mm(22), R - L, mm(0.4));
+    g.fillStyle = '#444'; g.fillText([cs.phones, cs.email].filter(Boolean).join('   ·   '), W / 2, H - mm(17));
+    if (cs.addressEn) g.fillText(cs.addressEn, W / 2, H - mm(12.5));
+    try {
+      const blob = await html2pdf().set({ margin: 0, image: { type: 'jpeg', quality: 0.97 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }, pagebreak: { mode: [] } }).from(cv, 'canvas').outputPdf('blob');
+      await saveFile(fileName('رسوم تأسيس ' + (S.ui.fcName || 'شركة')) + '.pdf', blob);
+    } catch (e) { toast((e && e.message) || 'تعذّر إعداد الملف.', true); }
+  }
+
+  function feeRecord() {
+    const cid = S.ui.fcClient; if (!cid || !writable()) return;
+    const r = feeResult(), fee = officeFee();
+    const bg = modal('تسجيل على حساب العميل', '<p style="margin:0">سيُسجَّل على حساب <b>' + esc(clientName(cid)) + '</b>:</p><ul style="margin:6px 0 0"><li>مصروفات رسوم تأسيس (نيابة عن العميل): ' + esc(moneyC(r.total)) + '</li>' + (fee ? '<li>مطالبة أتعاب تأسيس: ' + esc(moneyC(fee)) + '</li>' : '') + '</ul>',
+      '<button type="button" class="btn" data-close>إلغاء</button><button type="button" class="btn primary" id="fr-go">تسجيل</button>');
+    $('#fr-go', bg).addEventListener('click', async () => {
+      $('#fr-go', bg).disabled = true;
+      let seq = C.nextSeq(S.raw.transactions);
+      const today = C.todayISO(), name = S.ui.fcName ? ' – ' + S.ui.fcName : '';
+      const ok = await write(async () => {
+        await S.db.doc('transactions/' + uid()).set({ kind: 'expense', client: cid, date: today, amount: r.total, description: 'رسوم تأسيس شركة (' + LAW_NAME[r.law] + ')' + name, seq: seq++, createdAt: new Date().toISOString() });
+        if (fee) await S.db.doc('transactions/' + uid()).set({ kind: 'fee', client: cid, date: today, amount: fee, service: 'تأسيس الشركات', description: 'أتعاب تأسيس شركة' + name, number: C.nextNumber(S.raw.transactions, 'fee'), seq: seq++, createdAt: new Date().toISOString() });
+      });
+      if (ok) { closeModal(); toast('تم التسجيل على حساب العميل'); }
+    });
+  }
+
   /* ---------------- click delegation ---------------- */
   document.addEventListener('click', (ev) => {
     const el = ev.target.closest('[data-act],[data-client]');
@@ -2125,6 +2270,9 @@
         case 'client-template': return clientTemplate();
         case 'backup': return backup();
         case 'add-cert': return openCertForm(null);
+        case 'fc-pdf': return feePdf();
+        case 'fc-xlsx': return feeXlsx();
+        case 'fc-record': return feeRecord();
         case 'add-capcert': return openCapitalForm(null);
         case 'edit-cert': { const c = (S.raw.certificates || []).find(x => x.id === id); return c && c.type === 'capital' ? openCapitalForm(c) : openCertForm(c); }
         case 'copy-cert': { const c = (S.raw.certificates || []).find(x => x.id === id); return c && c.type === 'capital' ? openCapitalForm(null, c) : openCertForm(null, c); }

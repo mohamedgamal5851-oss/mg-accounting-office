@@ -314,7 +314,39 @@
     return { fees: round2(fees), payments: round2(payments), expenses: round2(expenses), discounts: round2(discounts), byService, byClient };
   }
 
-  const api = { effectiveObligations, effFreq, isLaw6, obLaw, obEntity, entityOf, obligationAllowed, NATURAL_FORMS, build, statement, aging, feesDue, tasksToGenerate, dueDate, obligationApplies, contractBills, revenue, nextNumber, nextSeq, nextClientCode,
+  /* Incorporation fees for limited liability companies (LLC), per the GAFI fee schedule:
+     law '72' = Investment Law 72/2017, law '159' = Companies Law 159/1981.
+     Percent-based fees are clamped to the schedule's minimum and maximum. */
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  function setupFees(o) {
+    const law = o.law === '159' ? '159' : '72';
+    const issued = Number(o.issued) || 0, paid = o.paid === '' || o.paid == null ? issued : (Number(o.paid) || 0);
+    const rows = [];
+    const add = (entity, name, basis, amount, extra) => rows.push(Object.assign({ entity, name, basis, amount: round2(amount) }, extra || {}));
+    const GAFI = 'الهيئة العامة للاستثمار والمناطق الحرة';
+    if (law === '72') {
+      add(GAFI, 'رسم طابع الشهيد', 'ثابت', 5);
+    } else {
+      add(GAFI, 'رسم تأسيس', 'واحد في الألف من رأس المال المصدر + 5 جنيه (حد أدنى 105 – حد أقصى 1,005)', clamp(issued * 0.001 + 5, 105, 1005));
+      add(GAFI, 'نقابة التجاريين', issued > 500000 ? 'رأس المال المصدر أكبر من خمسمائة ألف' : 'رأس المال المصدر أقل من أو يساوي خمسمائة ألف', issued > 500000 ? 250 : 125);
+    }
+    if (o.copy) add(GAFI, 'صورة طبق الأصل من العقد والنظام الأساسي (اختياري)', 'ثابت', 610);
+    if (law === '72' && issued < 20000) add('نقابة المحامين', 'رسم التصديق على توقيع المحامي على عقد الشركة', 'لا يستحق: رأس المال أقل من 20 ألف جنيه', 0);
+    else add('نقابة المحامين', 'رسم التصديق على توقيع المحامي على عقد الشركة', 'واحد في المائة من رأس المال المصدر + 50 جنيه (حد أدنى 300 – حد أقصى 25,050)', clamp(issued * 0.01 + 50, 300, 25050));
+    if (law === '72') add('مصلحة الشهر العقاري والتوثيق', 'رسم توثيق عقد الشركة (رسم تصديق)', 'ربع في المائة من رأس المال المدفوع (حد أدنى 10 – حد أقصى 10,000)', clamp(paid * 0.0025, 10, 10000));
+    else add('مصلحة الشهر العقاري والتوثيق', 'رسم توثيق عقد الشركة (رسم تصديق)', 'ربع في المائة من رأس المال المصدر (حد أدنى 10 – حد أقصى 1,000)', clamp(issued * 0.0025, 10, 1000));
+    add('الاتحاد العام للغرف التجارية', 'اشتراك سنوي للغرفة + رسم شهادة', 'اثنين في الألف من رأس المال المدفوع + 205 جنيه (حد أدنى 229 – حد أقصى 2,205)', clamp(paid * 0.002 + 205, 229, 2205));
+    if (law === '159' && o.industrial) add('اتحاد الصناعات المصرية', 'رسم اشتراك مبدئي بالغرفة + رسم شهادة (نشاط صناعي)', 'ثابت', 2508);
+    add('جهاز تنمية التجارة الداخلية', 'رسم القيد في السجل التجاري', 'ثابت', 110);
+    add('جهاز تنمية التجارة الداخلية', 'رسم استخراج شهادة عدم التباس الاسم التجاري', 'ثابت', 107);
+    if (o.realEstate) add('الهيئة العامة للرقابة على الصادرات والواردات', 'رسم شهادة القيد في سجل الوسطاء العقاريين / التجاريين', 'ثابت (أنشطة التسويق العقاري – الوساطة العقارية – الدعاية والإعلان)', 2835);
+    add('مصلحة الضرائب المصرية', 'استخراج البطاقة الضريبية / تسجيل ضريبة القيمة المضافة', 'بدون رسوم', 0);
+    add('الهيئة القومية للتأمينات الاجتماعية', 'استخراج الرقم التأميني للمنشأة', 'بدون رسوم', 0);
+    const total = round2(rows.reduce((t, r) => t + r.amount, 0));
+    return { law, issued, paid, rows, total };
+  }
+
+  const api = { setupFees, effectiveObligations, effFreq, isLaw6, obLaw, obEntity, entityOf, obligationAllowed, NATURAL_FORMS, build, statement, aging, feesDue, tasksToGenerate, dueDate, obligationApplies, contractBills, revenue, nextNumber, nextSeq, nextClientCode,
     todayISO, addMonths, monthDiff, monthBounds, daysBetween, addDays, round2, sign, KINDS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.OFCore = api;
 })(typeof window !== 'undefined' ? window : globalThis);
