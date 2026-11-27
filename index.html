@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-27 06:42">
+<meta name="of-build" content="2026-11-27 06:48">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -45,7 +45,7 @@ body { background: var(--bg); color: var(--ink); font: 14px/1.6 var(--font-body)
 button, input, select, textarea { font: inherit; color: inherit; }
 h1, h2, h3 { text-wrap: balance; margin: 0; }
 .num, td.n, .tile b { font-variant-numeric: tabular-nums; }
-td.n { white-space: nowrap; text-align: end; }
+td.n { white-space: nowrap; text-align: left; direction: ltr; }   /* amounts read left to right, so a minus sign stays in front */
 .code { font-family: var(--font-mono); font-size: 12.5px; }
 .neg { color: var(--ok); }
 .pos { color: var(--crit); }
@@ -135,7 +135,7 @@ table.grouped thead tr.grp + tr th { top: 30px; }
 .br-mix i { display: block; height: 100%; }
 .br-sG { background: #2f5fa8; } .br-sS { background: #1d7a46; } .br-sT { background: #b25e00; } .br-sEx { background: #9a9a9a; } .br-s0 { background: #6b4fa0; }
 @media (max-width: 900px) { .br-wrap { grid-template-columns: 1fr; } }
-.pdf-doc table.grouped thead tr.grp th { background: #fff; color: #1c1c1c; border-bottom: 1.5px solid #2b2b2b; text-align: center; }
+.pdf-doc table.grouped thead tr.grp th { background: #fff; color: #13294B; border-bottom: 1.5px solid #A6824A; text-align: center; font-family: "Times New Roman", CertSerif, Times, serif; font-size: 12px; }
 .pdf-doc .br-wrap { grid-template-columns: 1fr 1fr; gap: 14px; }
 /* old returns */
 .hstep header { gap: 10px; } .hnum { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); display: inline-grid; place-items: center; font-weight: 700; font-size: 13px; flex: none; }
@@ -167,6 +167,10 @@ label.inl input.hin { width: 130px; }
 .modal.pdfv { max-width: 980px; width: 96vw; }
 .sp-pages { display: flex; flex-direction: column; gap: 12px; max-height: 72vh; overflow: auto; background: var(--bg); padding: 10px; border-radius: 10px; }
 .sp-pages canvas { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.12); border-radius: 4px; }
+.pv-pages { display: flex; flex-direction: column; align-items: center; gap: 16px; background: #E9E5DC; padding: 16px; border-radius: 10px; max-height: 70vh; overflow-y: auto; }
+.pv-pages figure { margin: 0; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.16); width: min(100%, 640px); padding: 4.8% 3.8% 6.7%; position: relative; }
+.pv-pages.land figure { width: min(100%, 900px); padding: 3.4% 2.7% 4.8%; }
+.pv-pages img { width: 100%; display: block; } .pv-pages figcaption { position: absolute; bottom: 2.2%; left: 0; right: 0; text-align: center; font-size: 10px; color: #526173; border-top: 1px solid #A6824A; margin: 0 3.8%; padding-top: 2px; }
 .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12.5px; color: var(--muted); margin: 3px 0 1px; }
 .crumbs a { color: var(--muted); text-decoration: none; border-radius: 5px; padding: 0 3px; }
 .crumbs a:hover { color: var(--accent); background: var(--accent-soft); }
@@ -326,34 +330,38 @@ td .sub { color: var(--muted); font-size: 12px; }
 .picker small { color: var(--muted); }
 
 /* PDF layout: fixed light palette, independent of the viewer's theme */
-.pdf-doc { box-sizing: border-box; overflow: hidden; background: #fff; color: #1a1a1a; font: 12px/1.55 "IBM Plex Sans Arabic", sans-serif; padding: 4px 2px; direction: rtl; }
-.pdf-doc .pdf-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; border-bottom: 3px solid #1c1c1c; padding-bottom: 10px; margin-bottom: 14px; }
-.pdf-doc .brand-wrap { display: flex; gap: 12px; align-items: center; }
-.pdf-doc .brand-logo { height: 62px; width: auto; }
-.pdf-doc .brand { font-size: 18px; font-weight: 700; color: #1c1c1c; }
-.pdf-doc .sub { color: #6b6b6b; font-size: 11px; }
-.pdf-doc .ttl { text-align: end; }
-.pdf-doc h1 { font-size: 17px; margin: 0 0 4px; }
-.pdf-doc .ctx { color: #6b6b6b; font-size: 11px; }
-.pdf-doc h2 { font-size: 14px; margin: 16px 0 6px; color: #1c1c1c; }
+.pdf-doc { box-sizing: border-box; overflow: hidden; background: #fff; color: #16202E; font: 12px/1.6 Arial, "Liberation Sans", "IBM Plex Sans Arabic", sans-serif; padding: 4px 2px; direction: rtl; }
+.pdf-doc .pdf-head { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding-bottom: 4px; }
+.pdf-doc .ph-office { display: flex; flex-direction: column; gap: 1px; }
+.pdf-doc .brand, .pdf-doc h1, .pdf-doc h2, .pdf-doc .receipt .amt { font-family: "Times New Roman", CertSerif, Times, serif; }
+.pdf-doc .brand { font-size: 21px; font-weight: 700; color: #13294B; line-height: 1.35; }
+.pdf-doc .brand-logo { height: 58px; width: auto; }
+.pdf-doc .sub { color: #526173; font-size: 10.5px; }
+.pdf-doc .ph-rule { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
+.pdf-doc .ph-rule i { flex: 1; height: 1px; background: #A6824A; display: block; } .pdf-doc .ph-rule b { width: 7px; height: 7px; border-radius: 50%; background: #A6824A; display: block; }
+.pdf-doc .ph-title { text-align: center; margin-bottom: 12px; }
+.pdf-doc h1 { font-size: 21px; font-weight: 700; color: #13294B; margin: 0 0 2px; }
+.pdf-doc .ctx { color: #526173; font-size: 11px; }
+.pdf-doc h2 { font-size: 15px; font-weight: 700; margin: 16px 0 6px; color: #13294B; }
 .pdf-doc table { width: 100%; border-collapse: collapse; }
-.pdf-doc th { background: #2b2b2b; color: #fff; font-weight: 600; font-size: 11px; padding: 5px 6px; text-align: start; position: static; white-space: normal; }
-.pdf-doc td { padding: 4px 6px; border-bottom: 1px solid #e3e3e1; font-size: 11px; vertical-align: top; overflow-wrap: anywhere; }
-.pdf-doc tr:nth-child(even) td { background: #f7f7f6; }
+.pdf-doc th { background: #13294B; color: #fff; font-weight: 700; font-size: 11px; padding: 6px 6px; text-align: start; position: static; white-space: normal; }
+.pdf-doc td { padding: 4.5px 6px; border-bottom: 1px solid #EFEADF; font-size: 11px; vertical-align: top; overflow-wrap: anywhere; }
+.pdf-doc tr:nth-child(even) td { background: #FBF9F4; }
 .pdf-doc td.n, .pdf-doc th.n { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.pdf-doc td.none { text-align: center; color: #6b6b6b; padding: 12px; }
-.pdf-doc tfoot td { font-weight: 700; background: #ececeb !important; }
-.pdf-doc .box { border: 1px solid #e3e3e1; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 20px; font-size: 11.5px; }
-.pdf-doc .box span b { font-weight: 600; }
+.pdf-doc td.n { text-align: left; direction: ltr; }
+.pdf-doc td.none { text-align: center; color: #526173; padding: 12px; }
+.pdf-doc tfoot td { font-weight: 700; background: #F3EEE3 !important; color: #13294B; }
+.pdf-doc .box { border: 1px solid #E6E0D3; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 20px; font-size: 11.5px; }
+.pdf-doc .box span b { font-weight: 700; color: #13294B; }
 .pdf-doc .summary { display: flex; gap: 10px; margin: 12px 0; }
-.pdf-doc .summary div { flex: 1; border: 1px solid #e3e3e1; border-radius: 6px; padding: 8px 10px; }
-.pdf-doc .summary small { color: #6b6b6b; display: block; font-size: 10.5px; }
+.pdf-doc .summary div { flex: 1; border: 1px solid #E6E0D3; border-top: 3px solid #13294B; border-radius: 6px; padding: 8px 10px; }
+.pdf-doc .summary small { color: #526173; display: block; font-size: 10.5px; }
 .pdf-doc .summary b { font-size: 14px; }
-.pdf-doc .receipt { border: 2px solid #2b2b2b; border-radius: 10px; padding: 18px 22px; font-size: 13.5px; line-height: 2.1; }
-.pdf-doc .receipt .amt { font-size: 20px; font-weight: 700; color: #1c1c1c; }
+.pdf-doc .receipt { border: 2px solid #13294B; border-radius: 10px; padding: 18px 22px; font-size: 13.5px; line-height: 2.1; }
+.pdf-doc .receipt .amt { font-size: 21px; font-weight: 700; color: #13294B; }
 .pdf-doc .sign { display: flex; justify-content: space-between; margin-top: 40px; font-size: 12px; }
-.pdf-doc .sign div { width: 40%; border-top: 1px solid #6b6b6b; padding-top: 6px; text-align: center; }
-.pdf-doc .foot-note { margin-top: 14px; color: #6b6b6b; font-size: 10.5px; }
+.pdf-doc .sign div { width: 40%; border-top: 1px solid #526173; padding-top: 6px; text-align: center; font-family: "Times New Roman", CertSerif, Times, serif; font-size: 14px; font-weight: 700; }
+.pdf-doc .foot-note { margin-top: 14px; color: #526173; font-size: 10.5px; }
 
 
 /* Income certificate: one A4 page laid out like the office's existing certificate (sizes measured from it) */

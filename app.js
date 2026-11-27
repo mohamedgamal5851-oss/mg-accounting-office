@@ -1255,9 +1255,12 @@
 
   /* ---------------- PDF ---------------- */
   function pdfHead(title, ctx) {
-    const s = settings();
-    return '<header class="pdf-head"><div class="brand-wrap">' + (window.OF_LOGO ? '<img class="brand-logo" src="' + window.OF_LOGO.dark + '" alt="">' : '') + '<div><div class="brand">' + esc(s.officeName || 'مكتب المحاسبة') + '</div><div class="sub">' + esc(s.officeSub || '') + '</div><div class="sub">' + esc([s.address, s.phone, s.email].filter(Boolean).join(' · ')) + '</div>' + (s.taxNo ? '<div class="sub">رقم التسجيل الضريبي: ' + esc(s.taxNo) + '</div>' : '') + '</div></div>' +
-      '<div class="ttl"><h1>' + esc(title) + '</h1>' + (ctx ? '<div class="ctx">' + esc(ctx) + '</div>' : '') + '<div class="ctx">تاريخ الإصدار: ' + esc(C.todayISO()) + '</div></div></header>';
+    const s = settings(), L = window.OF_LOGO, LRM = '\u200E';
+    return '<header class="pdf-head"><div class="ph-office"><b class="brand">' + esc(s.officeName || 'مكتب المحاسبة') + '</b>' +
+      ((s.officeSub || s.taxNo) ? '<span class="sub">' + esc([s.officeSub, s.taxNo ? 'رقم التسجيل الضريبي ' + s.taxNo : ''].filter(Boolean).join(' · ')) + '</span>' : '') +
+      ([s.address, s.phone, s.email].some(Boolean) ? '<span class="sub">' + esc([s.address, s.phone, s.email].filter(Boolean).join(' · ')) + '</span>' : '') + '</div>' +
+      (L ? '<img class="brand-logo" src="' + L.dark + '" alt="">' : '') + '</header><div class="ph-rule"><i></i><b></b><i></i></div>' +
+      '<div class="ph-title"><h1>' + esc(title) + '</h1><div class="ctx">' + (ctx ? esc(ctx) + ' · ' : '') + 'تاريخ الإصدار ' + LRM + esc(C.todayISO()) + LRM + '</div></div>';
   }
   /* PDF pages are drawn by the page itself instead of html2canvas: html2canvas places Arabic text word by word and
      drops the spaces between words and the order of brackets. Here the browser lays the document out, then each line
@@ -1320,7 +1323,8 @@
       try { g.direction = cs.direction; } catch (e) {}
       for (const l of lines) {
         if (l.bottom < o.top + from || l.top > o.top + to) continue;
-        const t = txt.slice(l.s, l.e).replace(/\s+/g, ' ');
+        // dates and other number groups keep their left-to-right order inside Arabic text
+        const t = txt.slice(l.s, l.e).replace(/\s+/g, ' ').replace(/\d+(?:[-\/]\d+)+/g, (d) => '\u200E' + d + '\u200E');
         g.textAlign = rtl ? 'right' : 'left';
         g.fillText(t, rtl ? l.right : l.left, (l.top + l.bottom) / 2 + 0.5);
       }
@@ -1329,32 +1333,61 @@
   }
   async function makePdf(filename, inner, landscape) {
     if (!window.html2pdf) return toast('يتطلب تنزيل PDF اتصالًا بالإنترنت عند فتح الصفحة. اتصل ثم أعد تحميل الصفحة.', true);
-    toast('جارٍ إعداد ملف PDF…');
+    toast('جارٍ تجهيز المعاينة…');
     const holder = document.createElement('div'); holder.style.cssText = 'position:fixed;left:-20000px;top:0;';
     const doc = document.createElement('div'); doc.className = 'pdf-doc'; doc.dir = 'rtl'; doc.lang = 'ar';
     const innerW = landscape ? 281 : 194, innerH = (landscape ? 210 : 297) - 24;
     doc.style.width = innerW + 'mm';
     doc.innerHTML = inner + (settings().footer ? '<div class="foot-note">' + esc(settings().footer) + '</div>' : '');
     holder.appendChild(doc); document.body.appendChild(holder);
+    let pages = [];
     try {
+      // report fonts: Times New Roman for titles and Arial for the rest; the embedded serif stands in where Times New Roman is missing
+      await Promise.all(['400 16px CertSerif', '700 16px CertSerif', '400 12px Arial', '700 16px "Times New Roman"'].map(f => document.fonts.load(f, 'مكتب 123').catch(() => null)));
       if (document.fonts && document.fonts.ready) await document.fonts.ready;
       await Promise.all(Array.from(doc.querySelectorAll('img')).map(i => i.complete ? null : new Promise(r => { i.onload = i.onerror = r; })));
       const pxPerMm = doc.getBoundingClientRect().width / innerW;
-      const pages = [];
       for (const [a, b] of pageBreaks(doc, innerH * pxPerMm)) pages.push(await drawDocPage(doc, a, b, 2));
-      const blob = await html2pdf().set({ margin: [10, 8, 14, 8], image: { type: 'jpeg', quality: 0.95 }, jsPDF: { unit: 'mm', format: 'a4', orientation: landscape ? 'landscape' : 'portrait' }, pagebreak: { mode: [] } })
-        .from(pages[0], 'canvas').toPdf().get('pdf').then(p => {
-          for (let i = 1; i < pages.length; i++) {
-            p.addPage(); const c = pages[i];
-            p.addImage(c.toDataURL('image/jpeg', 0.95), 'JPEG', 8, 10, innerW, innerW * c.height / c.width);
-          }
-          const n = p.internal.getNumberOfPages(), w = p.internal.pageSize.getWidth(), hgt = p.internal.pageSize.getHeight();
-          for (let i = 1; i <= n; i++) { p.setPage(i); p.setFontSize(8); p.setTextColor(120); p.text(i + ' / ' + n, w / 2, hgt - 6, { align: 'center' }); p.text(C.todayISO(), 8, hgt - 6); }
-          return p.output('blob');
-        });
-      await saveFile(filename, blob);
-    } catch (e) { toast((e && e.message) || 'تعذّر إعداد الملف.', true); }
+    } catch (e) { toast((e && e.message) || 'تعذّر إعداد الملف.', true); return; }
     finally { holder.remove(); }
+    previewPdf(filename, pages, landscape, innerW);
+  }
+  function pdfBlob(pages, landscape, innerW) {
+    return html2pdf().set({ margin: [10, 8, 14, 8], image: { type: 'jpeg', quality: 0.95 }, jsPDF: { unit: 'mm', format: 'a4', orientation: landscape ? 'landscape' : 'portrait' }, pagebreak: { mode: [] } })
+      .from(pages[0], 'canvas').toPdf().get('pdf').then(p => {
+        for (let i = 1; i < pages.length; i++) {
+          p.addPage(); const c = pages[i];
+          p.addImage(c.toDataURL('image/jpeg', 0.95), 'JPEG', 8, 10, innerW, innerW * c.height / c.width);
+        }
+        const n = p.internal.getNumberOfPages(), w = p.internal.pageSize.getWidth(), hgt = p.internal.pageSize.getHeight();
+        for (let i = 1; i <= n; i++) { p.setPage(i); p.setDrawColor(166, 130, 74); p.setLineWidth(0.3); p.line(8, hgt - 10, w - 8, hgt - 10); p.setFontSize(8); p.setTextColor(82, 97, 115); p.text(i + ' / ' + n, w / 2, hgt - 6, { align: 'center' }); p.text(C.todayISO(), 8, hgt - 6); }
+        return p.output('blob');
+      });
+  }
+  /* print preview: the pages as they will come out, then download or print */
+  function previewPdf(filename, pages, landscape, innerW) {
+    const urls = pages.map(c => c.toDataURL('image/jpeg', 0.92)), n = urls.length;
+    const bg = modal('معاينة قبل التحميل', '<div class="pv-pages' + (landscape ? ' land' : '') + '">' + urls.map((u, i) => '<figure><img src="' + u + '" alt="صفحة ' + (i + 1) + '"><figcaption>' + (i + 1) + ' / ' + n + '</figcaption></figure>').join('') + '</div>',
+      '<span class="hint">' + esc(filename) + ' · ' + int(n) + ' صفحة</span><span style="flex:1"></span><button type="button" class="btn" data-close>إغلاق</button><button type="button" class="btn" id="pv-print">🖨 طباعة</button>' +
+      (S.downloads ? '<button type="button" class="btn primary" id="pv-dl">⤓ تنزيل PDF</button>' : ''), true);
+    bg.querySelector('.modal').classList.add('pdfv');
+    const dl = $('#pv-dl', bg);
+    if (dl) dl.addEventListener('click', async () => {
+      dl.disabled = true; dl.textContent = 'جارٍ التجهيز…';
+      try { const blob = await pdfBlob(pages, landscape, innerW); await saveFile(filename, blob); closeModal(); } catch (e) { toast((e && e.message) || 'تعذّر إعداد الملف.', true); dl.disabled = false; dl.textContent = '⤓ تنزيل PDF'; }
+    });
+    $('#pv-print', bg).addEventListener('click', () => printPages(urls, landscape));
+  }
+  function printPages(urls, landscape) {
+    const f = document.createElement('iframe'); f.setAttribute('aria-hidden', 'true'); f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+    document.body.appendChild(f);
+    const d = f.contentDocument;
+    d.open(); d.write('<!doctype html><html dir="rtl"><head><title>طباعة</title><style>@page{size:A4 ' + (landscape ? 'landscape' : 'portrait') + ';margin:10mm 8mm 14mm}html,body{margin:0}img{display:block;width:100%;break-after:page}img:last-child{break-after:auto}</style></head><body>' + urls.map(u => '<img src="' + u + '">').join('') + '</body></html>'); d.close();
+    const imgs = Array.from(d.images);
+    Promise.all(imgs.map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; }))).then(() => {
+      try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { toast('الطباعة غير متاحة في هذا العرض. نزّل الملف واطبعه.', true); }
+      setTimeout(() => f.remove(), 60000);
+    });
   }
   window.OF_PDF_TEST = async (inner, landscape) => { // used by tests only: returns page images
     const holder = document.createElement('div'); holder.style.cssText = 'position:fixed;left:-20000px;top:0;';
