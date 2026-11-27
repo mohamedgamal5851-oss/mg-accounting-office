@@ -472,17 +472,18 @@
       '<select data-ui="cStaff">' + options(staffOptions(), u.cStaff, 'جميع الموظفين') + '</select>' +
       '<select data-ui="cLaw">' + options(Object.entries(TAX_LAW), u.cLaw, 'كل الأنظمة الضريبية') + '</select>' +
       '<select data-ui="cBal">' + options([['due', 'عليهم مستحقات'], ['adv', 'لهم دفعات مقدمة']], u.cBal, 'كل الأرصدة') + '</select></div>';
-    h += '<div class="card tablewrap"><table><thead><tr><th>الكود</th><th>العميل</th><th>الموظف المسؤول</th><th>الهاتف</th><th>الالتزامات</th><th class="n">الرصيد (' + esc(cur()) + ')</th><th>آخر تحصيل</th><th>أقدم مستحق</th></tr></thead><tbody>';
-    if (!list.length) h += '<tr><td colspan="8" class="empty">لا يوجد عملاء مطابقون</td></tr>';
+    h += '<div class="card tablewrap"><table><thead><tr><th>الكود</th><th>العميل</th><th>نوع الشركة</th><th>النشاط</th><th>القانون</th><th>الموظف المسؤول</th><th>الهاتف</th><th>الالتزامات</th><th class="n">الرصيد (' + esc(cur()) + ')</th><th>آخر تحصيل</th><th>أقدم مستحق</th></tr></thead><tbody>';
+    if (!list.length) h += '<tr><td colspan="11" class="empty">لا يوجد عملاء مطابقون</td></tr>';
     let tot = 0;
     for (const c of list) {
       const a = M.acct.get(c.id); tot += a.balance;
       const obs = C.effectiveObligations(M, c).map(id => M.obById.get(id)).filter(Boolean);
-      h += '<tr class="click" data-client="' + c.id + '"><td class="code">' + esc(c.code) + '</td><td><div class="stack"><strong>' + esc(c.name) + '</strong><span class="sub">' + esc(c.legalForm || '') + (c.activity ? ' · ' + esc(c.activity) : '') + '</span></div>' + (lawOf(c) === '6-2025' ? ' <span class="pill info">قانون 6</span>' : '') + (c.status === 'inactive' ? ' <span class="pill mute">متوقف</span>' : '') + '</td>' +
+      h += '<tr class="click" data-client="' + c.id + '"><td class="code">' + esc(c.code) + '</td><td><strong>' + esc(c.name) + '</strong>' + (c.status === 'inactive' ? ' <span class="pill mute">متوقف</span>' : '') + '</td>' +
+        '<td>' + esc(c.legalForm || '—') + '</td><td>' + esc(c.activity || '—') + '</td><td>' + (lawOf(c) === '6-2025' ? '<span class="pill info">قانون 6 (التيسيرات)</span>' : 'قانون 91') + '</td>' +
         '<td>' + esc(staffName(c.assignedTo)) + '</td><td class="num">' + esc(c.phone || '') + '</td><td><span class="sub">' + (obs.length ? obs.length + ' التزام' : '—') + '</span></td>' + balCell(a.balance) +
         '<td class="num">' + esc(a.lastPayment || '—') + '</td><td>' + (a.aging.oldest && a.balance > 0 ? '<span class="pill ' + (a.aging.oldestDays > 90 ? 'crit' : a.aging.oldestDays > 30 ? 'warn' : 'mute') + '">' + int(a.aging.oldestDays) + ' يوم</span>' : '') + '</td></tr>';
     }
-    h += '</tbody>' + (list.length ? '<tfoot><tr><td colspan="5">الإجمالي</td>' + balCell(tot) + '<td colspan="2"></td></tr></tfoot>' : '') + '</table></div>';
+    h += '</tbody>' + (list.length ? '<tfoot><tr><td colspan="8">الإجمالي</td>' + balCell(tot) + '<td colspan="2"></td></tr></tfoot>' : '') + '</table></div>';
     return h + '</div>';
   }
 
@@ -1031,7 +1032,7 @@
     const M = S.M, u = S.ui;
     if (key === 'clients') {
       const list = filteredClients();
-      return { title: 'قائمة العملاء', ctx: int(list.length) + ' عميل', cols: [col('الكود'), col('العميل'), col('الشكل القانوني'), col('النشاط'), col('القانون الضريبي'), col('رقم التسجيل الضريبي'), col('المأمورية'), col('المسؤول'), col('الهاتف'), col('البريد الإلكتروني'), col('الحالة'), col('الرصيد', 1)],
+      return { title: 'قائمة العملاء', ctx: int(list.length) + ' عميل', cols: [col('الكود'), col('العميل'), col('نوع الشركة'), col('النشاط'), col('القانون'), col('رقم التسجيل الضريبي'), col('المأمورية'), col('المسؤول'), col('الهاتف'), col('البريد الإلكتروني'), col('الحالة'), col('الرصيد', 1)],
         rows: list.map(c => [c.code, c.name, c.legalForm, c.activity, TAX_LAW[lawOf(c)], c.taxRegNo, c.taxOffice, staffName(c.assignedTo), c.phone, c.email, c.status === 'inactive' ? 'متوقف' : 'نشط', M.acct.get(c.id).balance]),
         foot: ['الإجمالي', '', '', '', '', '', '', '', '', '', '', list.reduce((s, c) => s + M.acct.get(c.id).balance, 0)], landscape: true };
     }
