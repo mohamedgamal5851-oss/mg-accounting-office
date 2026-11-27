@@ -24,7 +24,9 @@
   const rets = () => S.raw.vatReturns || [];
   const retById = (id) => rets().find(r => r.id === id);
   const client = (id) => S.M && S.M.clientById.get(id);
-  const periodLabel = (r) => r.freq === 'quarterly' ? 'الربع المنتهي ' + A.monthLabel(r.period) : A.monthLabel(r.period);
+  const periodLabel = (r) => A.monthLabel(r.period);
+  // in report tables a period is written «مارس-2026»
+  const perShort = (per) => A.monthLabel(per).replace(/\s+(\d{4})$/, '-$1');
   const partyDoc = (cid) => (S.raw.vatParties || []).find(p => p.id === cid) || { id: cid, map: {} };
   const memFor = (cid) => { const m = partyDoc(cid).map || {}; return (side, key) => m[side + ':' + key] || null; };
   const statusOf = (r) => r.sub ? (r.sub.ok ? 'matched' : r.sub.accepted ? 'accepted' : 'diff') : (r.status || 'draft');
@@ -720,7 +722,7 @@
         const cells = (b, ref) => cols.map(([k]) => { const v = b ? b[k] : null, bad = ref && v != null && k !== 'exp' && Math.abs((v || 0) - (ref[k] || 0)) >= 1; return '<td class="n' + (bad ? ' cell-bad' : '') + '">' + (v == null || (k === 'exp' && !b.exp && ref == null) ? '' : v ? money(v) : '—') + '</td>'; }).join('');
         let t2 = '<table class="vat-tbl grouped hval"><thead><tr class="grp"><th></th><th colspan="' + SC.length + '" class="g">المبيعات</th><th colspan="' + PC.length + '" class="g">المشتريات</th><th></th></tr><tr><th>الفترة</th>' + cols.map(([, l]) => '<th class="n">' + esc(l) + '</th>').join('') + '</tr></thead><tbody>';
         vr.forEach((x, i) => {
-          const lbl = esc(h.freq === 'quarterly' ? 'الربع المنتهي ' + A.monthLabel(x.per) : A.monthLabel(x.per));
+          const lbl = esc(A.monthLabel(x.per));
           const nsBad = pv[i] && (Math.abs((bs[i].sS || 0) - (pv[i].sS || 0)) >= 1 || Math.abs((bs[i].sG || 0) - (pv[i].sG || 0)) >= 1);
           t2 += '<tr' + (pv[i] ? ' class="hv-top"' : '') + '><td>' + lbl + (pv[i] ? ' <small class="hint">الشيت</small>' : '') + (nsBad ? '' : ' <a href="#" class="hv-ns" data-act="vat-hist-ns" data-per="' + x.per + '" title="تعديل تصنيف المبيعات سلع أو خدمات">✎ سلع / خدمات</a>') + '</td>' + cells(bs[i], pv[i] ? Object.assign({ exp: 0 }, pv[i]) : null) + '</tr>';
           if (pv[i]) t2 += '<tr class="hv-sub"><td><small>الإقرار المقدَّم</small>' + (nsBad ? ' <button type="button" class="btn sm" data-act="vat-hist-ns" data-per="' + x.per + '">اكتشف فرق السلع والخدمات</button>' : '') + '</td>' + cols.map(([k]) => '<td class="n">' + (k === 'exp' ? '' : pv[i][k] ? money(pv[i][k]) : '—') + '</td>').join('') + '</tr>';
@@ -736,7 +738,7 @@
       '<th>الفترة</th><th class="n">ض. المبيعات</th><th class="n">ض. المدخلات</th><th class="n">الصافي</th>' +
       '<th>ض. المبيعات</th><th>ض. المدخلات</th><th>الرصيد السابق</th><th title="موجب = مستحق السداد، سالب = رصيد دائن">الصافي ±</th><th>رقم الإقرار</th><th>تاريخ التقديم</th><th>النتيجة</th><th>فرق مقبول</th></tr></thead><tbody>';
     for (const x of m.rows) {
-      const lbl = esc(h.freq === 'quarterly' ? 'الربع المنتهي ' + A.monthLabel(x.per) : A.monthLabel(x.per));
+      const lbl = esc(A.monthLabel(x.per));
       if (x.ex) {
         t += '<tr class="hx"><td><a href="#vat-ret-sum-' + x.ex.id + '">' + lbl + '</a></td><td colspan="9"><span class="pill mute">موجود في البرنامج</span> ' + pill(statusOf(x.ex)) + ' <span class="hint">الصافي ' + money(x.res) + (x.invs.length ? ' · ' + int(x.invs.length) + ' مستند من الشيت لن يُضاف هنا' : '') + '</span>' + subLinks(x.ex) + (A.writable() ? ' <a href="#" class="hv-ns" data-act="vat-edit" data-id="' + x.ex.id + '">✎ تعديل</a>' : '') + '</td><td colspan="2"></td></tr>';
         continue;
@@ -1837,7 +1839,7 @@
         const per = y + '-' + String(i + 1).padStart(2, '0'), r = retFor(ui.rmClient, per);
         list.push({ lead: [m + '-' + y + (r && r.kind === 'amended' ? ' (معدل)' : '')], r, note: !r && per < S.M.ym && per > firstPer(ui.rmClient) ? 'لم يُعَدّ' : '' });
       });
-      const b = brReport([col(q ? 'الربع' : 'الشهر')], list);
+      const b = brReport([col('الفترة')], list);
       return Object.assign(b, { title: 'ملخص إقرارات القيمة المضافة بالشهور', ctx: (c.name || '') + ' · سنة ' + y + (q ? ' · ربع سنوي' : ' · شهري'), landscape: true });
     }
     if (key === 'credit') {
@@ -1854,7 +1856,7 @@
     }
     if (key === 'books') return booksData();
     const list = rets().filter(r => (!ui.rsYear || r.period.startsWith(ui.rsYear)) && (!ui.rbClient || r.client === ui.rbClient)).sort((a, b) => a.period.localeCompare(b.period) || A.clientName(a.client).localeCompare(A.clientName(b.client), 'ar'));
-    const b = brReport([col('الشركة'), col('الفترة')], list.map(r => ({ lead: [A.clientName(r.client), periodLabel(r) + (r.kind === 'amended' ? ' (معدل)' : '')], r })));
+    const b = brReport([col('الشركة'), col('الفترة')], list.map(r => ({ lead: [A.clientName(r.client), perShort(r.period) + (r.kind === 'amended' ? ' (معدل)' : '')], r })));
     return Object.assign(b, { title: 'ملخص إقرارات القيمة المضافة', ctx: (ui.rsYear || 'جميع السنوات') + (ui.rbClient ? ' · ' + A.clientName(ui.rbClient) : ''), landscape: true });
   }
   /* ---------------- books: sales, purchases (without expenses) and expenses ----------------

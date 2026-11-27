@@ -540,7 +540,7 @@
     h += '<div class="kv">' + kv('الهاتف', phone ? '<a href="tel:' + esc(phone) + '" class="num">' + esc(c.phone) + '</a>' + (wa ? ' · <a href="https://wa.me/' + esc(wa) + '" target="_blank" rel="noopener">واتساب</a>' : '') : '') +
       kv('البريد', c.email ? '<a href="mailto:' + esc(c.email) + '">' + esc(c.email) + '</a>' : '') + kv('رقم التسجيل الضريبي', c.taxRegNo ? '<span class="num">' + esc(c.taxRegNo) + '</span>' : '') +
       kv('المأمورية', esc(c.taxOffice || '')) + kv('المسؤول', esc(staffName(c.assignedTo))) + '</div>';
-    if (due.length) h += '<h3>ضريبة القيمة المضافة غير المسددة</h3><div class="dlist">' + due.slice(0, 6).map(x => '<a href="#vat-ret-sum-' + x.r.id + '"><span>' + esc(x.r.freq === 'quarterly' ? 'الربع المنتهي ' + monthLabel(x.r.period) : monthLabel(x.r.period)) + '</span><b>' + money(x.left) + '</b><small class="' + (x.late > 0 ? 'is-crit' : '') + '">' + (x.late > 0 ? 'متأخر ' + int(x.late) + ' يوم' : 'آخر ميعاد ' + esc(x.due)) + '</small></a>').join('') + '</div>';
+    if (due.length) h += '<h3>ضريبة القيمة المضافة غير المسددة</h3><div class="dlist">' + due.slice(0, 6).map(x => '<a href="#vat-ret-sum-' + x.r.id + '"><span>' + esc(monthLabel(x.r.period)) + '</span><b>' + money(x.left) + '</b><small class="' + (x.late > 0 ? 'is-crit' : '') + '">' + (x.late > 0 ? 'متأخر ' + int(x.late) + ' يوم' : 'آخر ميعاد ' + esc(x.due)) + '</small></a>').join('') + '</div>';
     if (tasks.length) h += '<h3>أقرب الإجراءات</h3><div class="dlist">' + tasks.map(t => '<a href="#client-tasks-' + cid + '"><span>' + esc(t.title || '') + '</span><small class="' + (t.dueDate && t.dueDate < S.M.today ? 'is-crit' : '') + '">' + esc(t.dueDate || '') + '</small></a>').join('') + '</div>';
     h += '</div><footer><a class="btn primary" href="#client-statement-' + cid + '">فتح ملف العميل</a>' + (vatOn ? '<a class="btn" href="#vat-due-' + cid + '">كشف الحساب الضريبي</a>' : '') +
       (writable() || level('finance') === 'edit' ? '<button type="button" class="btn" data-act="add-tx" data-kind="payment" data-client="' + cid + '">تسجيل تحصيل</button>' : '') +
@@ -1112,7 +1112,7 @@
       $('#gt-go', bg).disabled = true;
       const ok = await write(async () => {
         for (const d of pick) {
-          const fq = freqFor(d.obligation, d.client); const per = fq === 'annual' ? 'السنة المالية المنتهية ' + monthLabel(ym) : fq === 'quarterly' ? 'الربع المنتهي ' + monthLabel(ym) : monthLabel(ym);
+          const fq = freqFor(d.obligation, d.client); const per = fq === 'annual' ? 'السنة المالية المنتهية ' + monthLabel(ym) : monthLabel(ym);
           const n = { id: uid(), client: d.client.id, obligation: d.obligation.id, period: ym, title: d.obligation.name + ' – ' + per, dueDate: d.dueDate, assignedTo: d.client.assignedTo || '', status: 'pending', doneDate: '', ref: '', notes: '' };
           await S.db.doc('tasks/' + n.id).set(n);
         }
