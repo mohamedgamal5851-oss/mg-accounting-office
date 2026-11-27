@@ -353,6 +353,14 @@
     }
     return out.sort((a, b) => b.late - a.late || a.due.localeCompare(b.due) || b.left - a.left);
   }
+  /* this month's cycle for the main dashboard: the period whose deadline falls this month, for every VAT client */
+  function cycleStats() {
+    if (!S.M) return null;
+    const cycle = C.addMonths(S.M.ym, -1), ob = vatOb();
+    const cl = S.M.clients.filter(c => c.status !== 'inactive' && (c.vatRegistered || (c.obligations || []).includes('vat') || rets().some(r => r.client === c.id)));
+    const rows = cl.map(c => { const per = isQ(c) ? (Number(cycle.slice(5)) % 3 === 0 ? cycle : null) : cycle; return per ? { c, per, due: C.dueDate(ob, per), r: retFor(c.id, per) } : null; }).filter(Boolean);
+    return { label: A.monthLabel(cycle), need: rows.length, done: rows.filter(x => done(x.r)).length, left: rows.filter(x => !done(x.r)), deadline: rows.length ? rows[0].due : '' };
+  }
   function dueSummary() {
     if (!S.M) return { total: 0, lateTotal: 0, n: 0, nLate: 0, extra: 0, rows: [] };
     const all = dueList(), late = all.filter(x => x.late > 0);
@@ -1648,7 +1656,7 @@
     const r = cur();
     if (r && r.locked && EDIT_ACTS.includes(a)) return toast('الإقرار مقفول بعد المطابقة. افتح القفل الأول.', true);
     switch (a) {
-      case 'vat-new': return A.writable() ? openNew({ client: el.dataset.client, period: el.dataset.period }) : null;
+      case 'vat-new': return canPay() ? openNew({ client: el.dataset.client, period: el.dataset.period }) : null;
       case 'vat-pick': ui.vClient = el.dataset.client; return A.go('vat-list');
       case 'vat-dash-clear': ui.dClient = ''; ui.dStaff = ''; return A.renderPage();
       case 'vat-hist-clear': { const h = H(); h.invs = []; h.files = []; return A.renderPage(); }
@@ -1741,5 +1749,5 @@
     const r = cur(); if (!r || !A.writable() || r.locked) return;
     ev.preventDefault(); undo(r.id);
   });
-  window.OFVat = { page, bind, act, allChunks, allFiles, homeStats, navMenu, crumbs, dueSummary, payInfo, resetCache: () => { VS.cache.clear(); VS.undo.clear(); VS.sel.clear(); } };
+  window.OFVat = { page, bind, act, allChunks, allFiles, homeStats, navMenu, crumbs, dueSummary, payInfo, cycleStats, resetCache: () => { VS.cache.clear(); VS.undo.clear(); VS.sel.clear(); } };
 })();
