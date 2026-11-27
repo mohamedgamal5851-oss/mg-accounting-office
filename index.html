@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-27 17:07">
+<meta name="of-build" content="2026-11-27 17:37">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -128,6 +128,10 @@ tr.sub-row td { color: var(--muted); font-size: 13px; } tr.sub-row td:nth-child(
 table.grouped thead tr.grp th { text-align: center; border-bottom: 0; padding-bottom: 2px; }
 table.grouped thead tr.grp th.g { border-bottom: 2px solid var(--accent); color: var(--ink); }
 table.grouped thead tr.grp + tr th { top: 30px; }
+/* a line after each column group (sales | purchases | result | …) */
+/* physical left: the page is right to left, and number cells are written left to right */
+table.grouped th.ge, table.grouped td.ge { border-left: 2px solid var(--brand); }
+table.grouped thead tr.grp th.ge { border-left-color: var(--line); }
 .br-wrap { display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; align-items: start; }
 .br-tbl { width: 100%; } .br-tbl td, .br-tbl th { padding: 6px 10px; } .br-tbl tfoot td { font-weight: 600; }
 .br-key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-inline-end: 6px; vertical-align: -1px; }
@@ -136,6 +140,8 @@ table.grouped thead tr.grp + tr th { top: 30px; }
 .br-sG { background: #2f5fa8; } .br-sS { background: #1d7a46; } .br-sT { background: #b25e00; } .br-sEx { background: #9a9a9a; } .br-s0 { background: #6b4fa0; }
 @media (max-width: 900px) { .br-wrap { grid-template-columns: 1fr; } }
 .pdf-doc table.grouped thead tr.grp th { background: #fff; color: #13294B; border-bottom: 1.5px solid #A6824A; text-align: center; font-family: "Times New Roman", CertSerif, Times, serif; font-size: 12px; }
+.pdf-doc table.grouped th.ge, .pdf-doc table.grouped td.ge { border-left: 1.5px solid #13294B; }
+.pdf-doc table.grouped thead tr.grp th.ge { border-left: 1.5px solid #A6824A; }
 .pdf-doc .br-wrap { grid-template-columns: 1fr 1fr; gap: 14px; }
 /* old returns */
 .hstep header { gap: 10px; } .hnum { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); display: inline-grid; place-items: center; font-weight: 700; font-size: 13px; flex: none; }
@@ -390,6 +396,10 @@ a.hv-ns:hover { text-decoration: underline; }
 .pdf-doc th { background: #13294B; color: #fff; font-weight: 700; font-size: 11px; padding: 6px 6px; text-align: start; position: static; white-space: normal; }
 .pdf-doc td { padding: 4.5px 6px; border-bottom: 1px solid #EFEADF; font-size: 11px; vertical-align: top; overflow-wrap: anywhere; }
 .pdf-doc tr:nth-child(even) td { background: #FBF9F4; }
+/* a wide table made to fit the page (see fitTables) */
+.pdf-doc table.fit th, .pdf-doc table.fit td { font-size: var(--fs, 9px); padding: 3px 3px; }
+.pdf-doc table.fit td:not(.w) { white-space: nowrap; overflow-wrap: normal; }
+.pdf-doc table.fit th { overflow-wrap: normal; word-break: keep-all; }
 .pdf-doc td.n, .pdf-doc th.n { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pdf-doc td.n { text-align: left; direction: ltr; }
 .pdf-doc td.none { text-align: center; color: #526173; padding: 12px; }

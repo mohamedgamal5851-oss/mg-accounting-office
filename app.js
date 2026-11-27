@@ -1217,20 +1217,33 @@
     }
     return null;
   }
-  function cellHtml(v, c) { return '<td' + (c.n ? ' class="n"' : c.wrap ? ' class="w"' : '') + '>' + (c.n ? (v === '' || v == null ? '' : money(v)) : esc(v == null ? '' : v)) + '</td>'; }
+  const cls = (...a) => { const s = a.filter(Boolean).join(' '); return s ? ' class="' + s + '"' : ''; };
+  function cellHtml(v, c, x) { return '<td' + cls(c.n ? 'n' : c.wrap ? 'w' : '', x) + '>' + (c.n ? (v === '' || v == null ? '' : money(v)) : esc(v == null ? '' : v)) + '</td>'; }
+  /* the last column of each group but the last: a line after it separates the groups (sales | purchases | …) */
+  function groupEnds(rep) { const s = new Set(); if (rep.groups) { let i = 0; rep.groups.forEach(([, n], k) => { i += n; if (k < rep.groups.length - 1) s.add(i - 1); }); } return s; }
   function tableHtml(rep) {
+    const ge = groupEnds(rep), gx = (i) => ge.has(i) ? 'ge' : '';
     // groups: an optional header row above the columns, [label, number of columns] (an empty label leaves the cells blank)
-    const grp = rep.groups ? '<tr class="grp">' + rep.groups.map(([l, n]) => '<th colspan="' + n + '"' + (l ? ' class="g"' : '') + '>' + esc(l) + '</th>').join('') + '</tr>' : '';
+    const grp = rep.groups ? '<tr class="grp">' + rep.groups.map(([l, n], k) => '<th colspan="' + n + '"' + cls(l ? 'g' : '', k < rep.groups.length - 1 ? 'ge' : '') + '>' + esc(l) + '</th>').join('') + '</tr>' : '';
     const tc = [rep.groups ? 'grouped' : '', rep.tcls || ''].filter(Boolean).join(' ');
-    return '<table' + (tc ? ' class="' + tc + '"' : '') + '><thead>' + grp + '<tr>' + rep.cols.map(c => '<th' + (c.n ? ' class="n"' : '') + '>' + esc(c.h) + '</th>').join('') + '</tr></thead><tbody>' +
-      (rep.rows.length ? rep.rows.map(r => '<tr' + (r.cls ? ' class="' + r.cls + '"' : '') + '>' + (r.cls ? spanRow(r, rep.cols) : r.map((v, i) => rep.cols[i].fmt ? '<td class="ed">' + rep.cols[i].fmt(v, r) + '</td>' : cellHtml(v, rep.cols[i])).join('')) + '</tr>').join('') : '<tr><td colspan="' + rep.cols.length + '" class="empty none">لا توجد بيانات</td></tr>') + '</tbody>' +
-      (rep.foot && rep.rows.length ? '<tfoot><tr>' + spanRow(rep.foot, rep.cols) + '</tr></tfoot>' : '') + '</table>';
+    return '<table' + (tc ? ' class="' + tc + '"' : '') + '><thead>' + grp + '<tr>' + rep.cols.map((c, i) => '<th' + cls(c.n ? 'n' : '', gx(i)) + '>' + esc(c.h) + '</th>').join('') + '</tr></thead><tbody>' +
+      (rep.rows.length ? rep.rows.map(r => '<tr' + (r.cls ? ' class="' + r.cls + '"' : '') + '>' + (r.cls ? spanRow(r, rep.cols, ge) : r.map((v, i) => rep.cols[i].fmt ? '<td' + cls('ed', gx(i)) + '>' + rep.cols[i].fmt(v, r) + '</td>' : cellHtml(v, rep.cols[i], gx(i))).join('')) + '</tr>').join('') : '<tr><td colspan="' + rep.cols.length + '" class="empty none">لا توجد بيانات</td></tr>') + '</tbody>' +
+      (rep.foot && rep.rows.length ? '<tfoot><tr>' + spanRow(rep.foot, rep.cols, ge) + '</tr></tfoot>' : '') + '</table>';
   }
   /* a total row: its label spreads over the empty text cells after it, so a long label does not widen the first column */
-  function spanRow(r, cols) {
-    let k = 1;
+  function spanRow(r, cols, ge) {
+    let k = 1; ge = ge || new Set();
     if (r[0] !== '' && r[0] != null && !cols[0].n) while (k < r.length && !cols[k].n && (r[k] === '' || r[k] == null)) k++;
-    return (k > 1 ? '<td colspan="' + k + '" class="lbl">' + esc(r[0]) + '</td>' : cellHtml(r[0], cols[0])) + r.slice(k).map((v, i) => cellHtml(v, cols[k + i])).join('');
+    return (k > 1 ? '<td colspan="' + k + '"' + cls('lbl', ge.has(k - 1) ? 'ge' : '') + '>' + esc(r[0]) + '</td>' : cellHtml(r[0], cols[0], ge.has(0) ? 'ge' : '')) + r.slice(k).map((v, i) => cellHtml(v, cols[k + i], ge.has(k + i) ? 'ge' : '')).join('');
+  }
+  /* a report without some of its columns (the groups shrink with them) */
+  function dropCols(rep, keep) {
+    const idx = rep.cols.map((c, i) => keep(c, i) ? i : -1).filter(i => i >= 0);
+    if (idx.length === rep.cols.length) return rep;
+    const pick = (r) => { if (!r) return r; const o = idx.map(i => r[i]); for (const k of ['cls', 'rid', 'auto', 'ref', 'ro']) if (r[k] !== undefined) o[k] = r[k]; return o; };
+    let groups = null;
+    if (rep.groups) { groups = []; let i = 0; for (const [l, n] of rep.groups) { const m = idx.filter(j => j >= i && j < i + n).length; if (m) groups.push([l, m]); i += n; } }
+    return Object.assign({}, rep, { cols: idx.map(i => rep.cols[i]), rows: rep.rows.map(pick), foot: pick(rep.foot), groups });
   }
 
   function pageReports(key) {
@@ -1337,7 +1350,10 @@
       while ((m = re.exec(txt))) {
         range.setStart(n, m.index); range.setEnd(n, m.index + m[0].length);
         const rr = range.getClientRects(); if (!rr.length) continue;
-        const rc = rr[0], mid = (rc.top + rc.bottom) / 2;
+        // a word of Arabic and digits («مارس-2026») comes in two boxes on the same line: take them together
+        const rc = Array.from(rr).filter(x => Math.abs((x.top + x.bottom) / 2 - (rr[0].top + rr[0].bottom) / 2) < rr[0].height * 0.45)
+          .reduce((a, x) => ({ top: Math.min(a.top, x.top), bottom: Math.max(a.bottom, x.bottom), left: Math.min(a.left, x.left), right: Math.max(a.right, x.right), height: a.height }), { top: rr[0].top, bottom: rr[0].bottom, left: rr[0].left, right: rr[0].right, height: rr[0].height });
+        const mid = (rc.top + rc.bottom) / 2;
         let line = lines.find(l => Math.abs(l.mid - mid) < rc.height * 0.45);
         if (!line) { line = { mid, top: rc.top, bottom: rc.bottom, left: rc.left, right: rc.right, s: m.index, e: m.index + m[0].length }; lines.push(line); }
         line.left = Math.min(line.left, rc.left); line.right = Math.max(line.right, rc.right); line.top = Math.min(line.top, rc.top); line.bottom = Math.max(line.bottom, rc.bottom);
@@ -1356,6 +1372,17 @@
     }
     g.restore();
   }
+  /* a table wider than the page: its cells stay on one line and the font gets smaller until it fits */
+  function fitTables(doc) {
+    const W = doc.clientWidth + 1;
+    for (const t of doc.querySelectorAll('table')) {
+      if (t.scrollWidth <= W) continue;
+      t.classList.add('fit');
+      let fs = 10;
+      t.style.setProperty('--fs', fs + 'px');
+      while (t.scrollWidth > W && fs > 6) { fs -= 0.5; t.style.setProperty('--fs', fs + 'px'); }
+    }
+  }
   async function makePdf(filename, inner, landscape) {
     if (!window.html2pdf) return toast('يتطلب تنزيل PDF اتصالًا بالإنترنت عند فتح الصفحة. اتصل ثم أعد تحميل الصفحة.', true);
     toast('جارٍ تجهيز المعاينة…');
@@ -1371,6 +1398,7 @@
       await Promise.all(['400 16px CertSerif', '700 16px CertSerif', '400 12px Arial', '700 16px "Times New Roman"'].map(f => document.fonts.load(f, 'مكتب 123').catch(() => null)));
       if (document.fonts && document.fonts.ready) await document.fonts.ready;
       await Promise.all(Array.from(doc.querySelectorAll('img')).map(i => i.complete ? null : new Promise(r => { i.onload = i.onerror = r; })));
+      fitTables(doc);
       const pxPerMm = doc.getBoundingClientRect().width / innerW;
       for (const [a, b, hd] of pageBreaks(doc, innerH * pxPerMm)) pages.push(await drawDocPage(doc, a, b, 2, hd));
     } catch (e) { toast((e && e.message) || 'تعذّر إعداد الملف.', true); return; }
@@ -1472,15 +1500,142 @@
     const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     saveFile(filename, new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   }
+  /* ---------------- Excel with the program's look ----------------
+     a small .xlsx writer, no library: right-to-left sheets, the office name and the title above the table,
+     navy column headers, money formats, total rows, lines between column groups, frozen headers,
+     and the column headers repeated on each printed page */
+  const XL = (() => {
+    const crcT = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+    const crc32 = (b) => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = crcT[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+    const u16 = (v) => [v & 255, (v >>> 8) & 255], u32 = (v) => [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255];
+    // a zip with stored (uncompressed) entries
+    function zip(files) {
+      const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+      for (const f of files) {
+        const nm = enc.encode(f.name), d = typeof f.data === 'string' ? enc.encode(f.data) : f.data, crc = crc32(d);
+        const head = new Uint8Array([].concat(u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(d.length), u32(d.length), u16(nm.length), u16(0)));
+        parts.push(head, nm, d);
+        central.push(new Uint8Array([].concat(u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(d.length), u32(d.length), u16(nm.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(off))), nm);
+        off += head.length + nm.length + d.length;
+      }
+      const cl = central.reduce((a, x) => a + x.length, 0);
+      const end = new Uint8Array([].concat(u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(cl), u32(off), u16(0)));
+      return new Blob(parts.concat(central, [end]), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    }
+    const x = (s) => String(s == null ? '' : s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const colName = (i) => { let s = ''; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+    const NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+    const K = { navy: '13294B', gold: 'A6824A', ink: '1B2434', gray: '6B7280', line: 'C9D1DE', soft: 'E9EDF4', grp: 'DDE3EE', sub: 'F4EFE3' };
+    function styles() {
+      const fonts = [], fills = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'], borders = [], xfs = [], seen = new Map();
+      const idx = (arr, s) => { let i = arr.indexOf(s); if (i < 0) { i = arr.length; arr.push(s); } return i; };
+      const font = (o) => idx(fonts, '<font>' + (o.b ? '<b/>' : '') + '<sz val="' + (o.sz || 10) + '"/><color rgb="FF' + (o.c || K.ink) + '"/><name val="Arial"/><family val="2"/></font>');
+      const fill = (c) => c ? idx(fills, '<fill><patternFill patternType="solid"><fgColor rgb="FF' + c + '"/><bgColor indexed="64"/></patternFill></fill>') : 0;
+      const side = (k, v) => v ? '<' + k + ' style="' + v[0] + '"><color rgb="FF' + v[1] + '"/></' + k + '>' : '<' + k + '/>';
+      // b: null (no borders) or { left, right, top, bottom } each [style, color] or 0
+      const border = (b) => idx(borders, b ? '<border>' + side('left', b.left) + side('right', b.right) + side('top', b.top) + side('bottom', b.bottom) + '<diagonal/></border>' : '<border><left/><right/><top/><bottom/><diagonal/></border>');
+      font({}); border(null);
+      const xf = (o) => {
+        const key = JSON.stringify(o); if (seen.has(key)) return seen.get(key);
+        const i = xfs.length;
+        xfs.push('<xf numFmtId="' + (o.num ? 164 : 0) + '" fontId="' + font(o.font || {}) + '" fillId="' + fill(o.fill) + '" borderId="' + border(o.border || null) + '" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"' + (o.num ? ' applyNumberFormat="1"' : '') + '><alignment' + (o.h ? ' horizontal="' + o.h + '"' : '') + ' vertical="center"' + (o.wrap ? ' wrapText="1"' : '') + ' readingOrder="2"/></xf>');
+        seen.set(key, i); return i;
+      };
+      xf({});
+      const xml = () => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00;-#,##0.00"/></numFmts>' +
+        '<fonts count="' + fonts.length + '">' + fonts.join('') + '</fonts><fills count="' + fills.length + '">' + fills.join('') + '</fills><borders count="' + borders.length + '">' + borders.join('') + '</borders>' +
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="' + xfs.length + '">' + xfs.join('') + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+      return { xf, xml };
+    }
+    // the cell borders: thin lines, a heavier line after the last column of each group (and over the total row)
+    const thin = ['thin', K.line], groupLine = ['medium', K.navy];
+    const bd = (end, top) => ({ left: thin, right: end ? groupLine : thin, top: top || thin, bottom: thin });
+    function sheet(sh, st, i) {
+      const rep = sh.rep, cols = rep.cols, n = Math.max(1, cols.length), ge = groupEnds(rep), last = colName(n - 1);
+      const rowsX = [], merges = [], widths = cols.map(c => Math.min(18, String(c.h || '').length + 2));
+      let r = 0;
+      const put = (cells, ht) => { r++; rowsX.push('<row r="' + r + '"' + (ht ? ' ht="' + ht + '" customHeight="1"' : '') + '>' + cells.join('') + '</row>'); };
+      const cell = (ci, v, s, isNum, noW) => {
+        const ref = colName(ci) + (r + 1);
+        if (v === '' || v == null) return '<c r="' + ref + '" s="' + s + '"/>';
+        if (isNum && typeof v === 'number' && isFinite(v)) { widths[ci] = Math.max(widths[ci], money(v).length + 2); return '<c r="' + ref + '" s="' + s + '"><v>' + v + '</v></c>'; }
+        const t = String(v); if (!noW) widths[ci] = Math.max(widths[ci], Math.min(45, t.length + 2));
+        return '<c r="' + ref + '" s="' + s + '" t="inlineStr"><is><t xml:space="preserve">' + x(t) + '</t></is></c>';
+      };
+      const full = (v, style) => { const c = '<c r="A' + (r + 1) + '" s="' + style + '" t="inlineStr"><is><t xml:space="preserve">' + x(v) + '</t></is></c>'; if (n > 1) merges.push('A' + (r + 1) + ':' + last + (r + 1)); return c; };
+      // the heading: office, title, date
+      put([full(settings().officeName || 'مكتب المحاسبة', st.xf({ font: { b: 1, sz: 15, c: K.navy } }))], 24);
+      put([full(sh.title + (sh.ctx ? ' — ' + sh.ctx : ''), st.xf({ font: { b: 1, sz: 12, c: K.navy } }))], 20);
+      put([full('تاريخ الإصدار: ' + C.todayISO(), st.xf({ font: { sz: 9, c: K.gray } }))]);
+      put([]);
+      const headTop = r + 1;
+      if (rep.groups) {
+        const cells = []; let ci = 0;
+        rep.groups.forEach(([l, k], gi) => {
+          const end = gi < rep.groups.length - 1;
+          for (let j = 0; j < k; j++) {
+            const s = l ? st.xf({ font: { b: 1, sz: 11, c: K.navy }, fill: K.grp, h: 'center', border: { left: thin, right: end && j === k - 1 ? groupLine : thin, top: thin, bottom: ['medium', K.gold] } }) : st.xf({ border: end && j === k - 1 ? { left: 0, right: groupLine, top: 0, bottom: 0 } : null });
+            cells.push(cell(ci + j, j === 0 ? l : '', s, false, k > 1));
+          }
+          if (k > 1 && l) merges.push(colName(ci) + (r + 1) + ':' + colName(ci + k - 1) + (r + 1));
+          ci += k;
+        });
+        put(cells, 20);
+      }
+      put(cols.map((c, ci) => cell(ci, c.h, st.xf({ font: { b: 1, c: 'FFFFFF' }, fill: K.navy, h: 'center', wrap: 1, border: { left: thin, right: ge.has(ci) ? ['medium', 'FFFFFF'] : thin, top: thin, bottom: thin } }))), 30);
+      const headEnd = r;
+      const body = (row, kind) => {
+        // kind: '' plain, 'sub' a month's total, 'foot' the grand total; a total's label spreads over the empty text cells after it
+        const font = kind ? { b: 1, c: kind === 'foot' ? K.navy : K.ink } : {}, fillC = kind === 'foot' ? K.soft : kind === 'sub' ? K.sub : '', top = kind === 'foot' ? ['medium', K.gold] : null;
+        let k = 1;
+        if (kind && row[0] !== '' && row[0] != null && !cols[0].n) while (k < row.length && !cols[k].n && (row[k] === '' || row[k] == null)) k++;
+        const cells = [];
+        for (let ci = 0; ci < n; ci++) {
+          const c = cols[ci] || {}, s = st.xf({ font, fill: fillC, num: c.n ? 1 : 0, wrap: c.wrap ? 1 : 0, border: bd(ge.has(ci) || (k > 1 && ci === k - 1 && ge.has(ci)), top) });
+          cells.push(cell(ci, ci > 0 && ci < k ? '' : row[ci], s, !!c.n, k > 1 && ci === 0));
+        }
+        if (k > 1) merges.push('A' + (r + 1) + ':' + colName(k - 1) + (r + 1));
+        put(cells);
+      };
+      for (const row of rep.rows) body(row, row.cls === 'mtot' ? 'sub' : row.cls ? 'sub' : '');
+      if (!rep.rows.length) put([full('لا توجد بيانات', st.xf({ font: { c: K.gray }, h: 'center' }))]);
+      if (rep.foot && rep.rows.length) body(rep.foot, 'foot');
+      const fz = Math.min(rep.freeze || 0, n - 1), tl = colName(fz) + (headEnd + 1);
+      const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet ' + NS + '><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:' + last + Math.max(1, r) + '"/>' +
+        '<sheetViews><sheetView rightToLeft="1" workbookViewId="0"' + (i ? '' : ' tabSelected="1"') + '><pane ' + (fz ? 'xSplit="' + fz + '" ' : '') + 'ySplit="' + headEnd + '" topLeftCell="' + tl + '" activePane="' + (fz ? 'bottomRight' : 'bottomLeft') + '" state="frozen"/></sheetView></sheetViews>' +
+        '<sheetFormatPr defaultRowHeight="18"/><cols>' + widths.map((w, ci) => '<col min="' + (ci + 1) + '" max="' + (ci + 1) + '" width="' + Math.max(8, Math.min(48, w)).toFixed(1) + '" customWidth="1"/>').join('') + '</cols>' +
+        '<sheetData>' + rowsX.join('') + '</sheetData>' + (merges.length ? '<mergeCells count="' + merges.length + '">' + merges.map(m => '<mergeCell ref="' + m + '"/>').join('') + '</mergeCells>' : '') +
+        '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="' + (rep.landscape ? 'landscape' : 'portrait') + '" fitToWidth="1" fitToHeight="0"/>' +
+        '<headerFooter><oddFooter>&amp;C&amp;P / &amp;N</oddFooter></headerFooter></worksheet>';
+      return { xml, titles: [headTop, headEnd] };
+    }
+    function book(sheets) {
+      const st = styles(), used = new Set();
+      const names = sheets.map(s => { let b = String(s.name || 'Sheet').replace(/[\\/?*[\]:]/g, ' ').slice(0, 31).trim() || 'Sheet', nm = b, k = 2; while (used.has(nm)) nm = b.slice(0, 28) + ' ' + k++; used.add(nm); return nm; });
+      const built = sheets.map((s, i) => sheet(s, st, i));
+      const files = [
+        { name: '[Content_Types].xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' + built.map((_, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('') + '</Types>' },
+        { name: '_rels/.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+        { name: 'xl/workbook.xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook ' + NS + '><bookViews><workbookView/></bookViews><sheets>' + names.map((nm, i) => '<sheet name="' + x(nm) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join('') + '</sheets>' +
+          '<definedNames>' + built.map((b, i) => '<definedName name="_xlnm.Print_Titles" localSheetId="' + i + '">\'' + x(names[i].replace(/'/g, "''")) + '\'!$' + b.titles[0] + ':$' + b.titles[1] + '</definedName>').join('') + '</definedNames></workbook>' },
+        { name: 'xl/_rels/workbook.xml.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + built.map((_, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join('') + '<Relationship Id="rId' + (built.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' }
+      ].concat(built.map((b, i) => ({ name: 'xl/worksheets/sheet' + (i + 1) + '.xml', data: b.xml })), [{ name: 'xl/styles.xml', data: st.xml() }]);
+      return zip(files);
+    }
+    return { book };
+  })();
+  /* sheets: [{ name, title, ctx, rep }] — each report table on its own sheet, styled like the program */
+  function xlsxReps(filename, sheets) {
+    try { saveFile(filename, XL.book(sheets.filter(s => s && s.rep))); }
+    catch (e) { console.error(e); toast('تعذّر تجهيز ملف Excel.', true); }
+  }
   function xlsxReport(key) {
     const rep = reportData(key); if (!rep) return;
-    const sheets = [{ name: rep.title, ctx: rep.ctx, rows: aoa(rep) }];
-    if (rep.extra) sheets.push({ name: rep.extra.title, ctx: rep.ctx, rows: aoa(rep.extra) });
-    xlsxBook(fileName(rep.title) + '.xlsx', sheets);
+    xlsxReps(fileName(rep.title) + '.xlsx', [{ name: rep.title, title: rep.title, ctx: rep.ctx, rep }].concat(rep.extra ? [{ name: rep.extra.title, title: rep.extra.title, ctx: rep.ctx, rep: Object.assign({ landscape: rep.landscape }, rep.extra) }] : []));
   }
   function xlsxStatement(id, useReportRange) {
     const u = S.ui, st = C.statement(S.M, id, useReportRange ? u.rFrom : u.stFrom, useReportRange ? u.rTo : u.stTo);
-    xlsxBook(fileName('كشف حساب ' + st.client.name) + '.xlsx', [{ name: 'كشف حساب', ctx: st.client.name + ' · ' + rangeCtx(st.from, st.to), rows: aoa(statementRep(st)) }]);
+    xlsxReps(fileName('كشف حساب ' + st.client.name) + '.xlsx', [{ name: 'كشف حساب', title: 'كشف حساب', ctx: st.client.name + ' · ' + rangeCtx(st.from, st.to), rep: statementRep(st) }]);
   }
 
   /* ---------------- credentials vault ----------------
@@ -2646,7 +2801,7 @@
 
   /* ---------------- shared with modules (vat.js) ---------------- */
   window.OFApp = { S, C, $, $$, esc, uid, money, moneyC, int, cur, monthLabel, clean, clientName, settings, options, clientOptions, topBar, actBtn, modal, closeModal, toast, write,
-    confirmBox, fld, inp, val, writable, go, renderPage, scheduleRender, makePdf, printPages, pdfHead, tableHtml, xlsxBook, saveFile, fileName, col, lawOf, MONTHS, TAX_LAW, svgIcon, level, saveSettings };
+    confirmBox, fld, inp, val, writable, go, renderPage, scheduleRender, makePdf, printPages, pdfHead, tableHtml, dropCols, xlsxReps, xlsxBook, saveFile, fileName, col, lawOf, MONTHS, TAX_LAW, svgIcon, level, saveSettings };
 
   /* ---------------- boot ---------------- */
   renderShell();

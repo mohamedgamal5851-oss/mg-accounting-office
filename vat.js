@@ -1764,36 +1764,52 @@
   const SHORT = { draft: 'مسودة', ready: 'جاهز', submitted: 'مقدَّم', matched: '✓ مطابق', accepted: '✓ فرق مقبول', diff: '✗ فروق' };
   /* rows of returns with sales and purchases split by kind. list: [{ lead: [label cells], r: return or null, note }] */
   const BRL = Object.fromEntries(V.BR_S.concat(V.BR_P));
+  /* the attachment cell: the submitted return (view, download) and the summary PDF; not printed, not in Excel */
+  function attCell(v, row) {
+    const r = row.rid && retById(row.rid); if (!r) return '';
+    const sb = r.sub || {};
+    return '<span class="sublinks">' + (sb.fileChunks ? '<a href="#" data-act="vat-view-sub" data-id="' + r.id + '" title="عرض الإقرار المقدَّم وتحميله أو طباعته">📄 الإقرار</a>' + (S.downloads ? '<a href="#" data-act="vat-dl-sub" data-id="' + r.id + '" title="تحميل الإقرار المقدَّم PDF">⤓</a>' : '') : '') +
+      '<a href="#" data-act="vat-pdf-sum" data-id="' + r.id + '" title="ملخص الإقرار PDF للطباعة أو التحميل">🖨 ملخص</a></span>';
+  }
   function brReport(leadCols, list) {
     const col = A.col; let pending = 0;
     const recs = list.map(x => {
       if (!x.r) return x;
       const s = x.r.sum || {}, prev = prevCredit(x.r), res = V.r2((s.due || 0) - prev), b = brOf(x.r);
       if (b === undefined) pending++;
-      return Object.assign({ s, prev, res, b: b || null }, x);
+      return Object.assign({ s, prev, res, b: b || null, pi: payInfo(x.r) }, x);
     });
     const any = (k) => recs.some(x => x.b && x.b[k]), any0 = any('s0'), anyT = any('sTbl');
     // the notes as the return shows them: (+) debit notes, (−) credit notes
     const sA = [['sAdjP', 'تسويات +'], ['sAdjM', 'تسويات −']].filter(([k]) => any(k)), pA = [['pAdjP', 'تسويات +'], ['pAdjM', 'تسويات −']].filter(([k]) => any(k));
     const sK = V.BR_S.filter(([k]) => k !== 's0' || any0).concat(sA), pK = V.BR_P.concat(pA);
-    const cols = leadCols.concat(sK.map(([, l]) => col(l, 1)), [col('ض. المبيعات', 1)], anyT ? [col('ض. الجدول', 1)] : [], pK.map(([, l]) => col(l, 1)),
-      [col('ض. المدخلات', 1), col('المستحقة', 1), col('الرصيد السابق', 1), col('مستحق السداد', 1), col('رصيد دائن مرحّل', 1), col('الحالة'),
-        Object.assign(col('التقديم'), { fmt: (v, row) => { const r = row.rid && retById(row.rid); return r ? (r.sub && r.sub.sentDate ? '<span class="hint" dir="ltr">' + esc(r.sub.sentDate) + '</span> ' : '') + subLinks(r, true) : esc(v == null ? '' : v); } })]);
-    const groups = [['', leadCols.length], ['المبيعات', sK.length + 1 + (anyT ? 1 : 0)], ['المشتريات', pK.length + 1], ['نتيجة الإقرار', 4], ['', 2]];
-    const nNum = cols.length - leadCols.length - 2, tot = new Array(nNum).fill(0);
+    // each column: [id, header, numeric, added up in the total row]
+    const CL = [].concat(sK.map(([k, l]) => [k, l, 1, 1]), [['sAll', 'إجمالي المبيعات', 1, 1], ['out', 'ض. المبيعات', 1, 1]], anyT ? [['sTbl', 'ض. الجدول', 1, 1]] : [],
+      pK.map(([k, l]) => [k, l, 1, 1]), [['pAll', 'إجمالي المشتريات', 1, 1], ['inp', 'ض. المدخلات', 1, 1]],
+      [['due', 'المستحقة', 1, 1], ['prev', 'الرصيد السابق', 1, 0], ['carry', 'رصيد دائن مرحّل', 1, 0], ['pay', 'مستحق السداد', 1, 1]],
+      [['paid', 'المسدد', 1, 1], ['left', 'الفرق', 1, 1], ['payDate', 'تاريخ السداد', 0, 0]],
+      [['st', 'الحالة', 0, 0], ['no', 'رقم الإقرار', 0, 0], ['sent', 'تاريخ التقديم', 0, 0], ['att', 'المرفق', 0, 0]]);
+    const cols = leadCols.concat(CL.map(([k, l, n]) => k === 'att' ? Object.assign(col(l), { id: k, noPdf: 1, noXlsx: 1, fmt: attCell }) : Object.assign(col(l, n), { id: k, sum: 0 })));
+    const groups = [['', leadCols.length], ['المبيعات', sK.length + 2 + (anyT ? 1 : 0)], ['المشتريات', pK.length + 2], ['نتيجة الإقرار', 4], ['السداد', 3], ['التقديم', 4]];
+    const L = leadCols.length, at = Object.fromEntries(CL.map(([k], i) => [k, L + i]));
     const rows = recs.map(x => {
-      if (!x.r) return x.lead.concat(new Array(nNum).fill(''), [x.note || '', '']);
-      const b = x.b, s = x.s, v = (k) => b ? b[k] || 0 : '';
-      const sgn = (k) => /AdjM$/.test(k) && b ? -(b[k] || 0) : v(k);
-      const nums = sK.map(([k]) => sgn(k)).concat([s.out || 0], anyT ? [v('sTbl')] : [], pK.map(([k]) => sgn(k)), [s.inp || 0, s.due || 0, x.prev, x.res > 0 ? x.res : '', x.res < 0 ? -x.res : '']);
-      nums.forEach((n, i) => { tot[i] += Number(n) || 0; });
-      const row = x.lead.concat(nums, [SHORT[statusOf(x.r)], x.r.sub ? [x.r.sub.formNo, x.r.sub.sentDate].filter(Boolean).join(' · ') : '']);
+      const row = x.lead.concat(new Array(CL.length).fill(''));
+      if (!x.r) { row[at.st] = x.note || ''; return row; }
+      const b = x.b, s = x.s, pi = x.pi, set = (k, v) => { row[at[k]] = v; };
+      for (const [k] of sK.concat(pK)) set(k, b ? (/AdjM$/.test(k) ? -(b[k] || 0) : b[k] || 0) : '');
+      if (b) { set('sAll', b.sAll || 0); set('pAll', b.pAll || 0); if (anyT) set('sTbl', b.sTbl || 0); }
+      set('out', s.out || 0); set('inp', s.inp || 0); set('due', s.due || 0); set('prev', x.prev);
+      set('carry', x.res < 0 ? -x.res : ''); set('pay', x.res > 0 ? x.res : '');
+      // payments: what was paid, what is left (a partial payment shows here), and when
+      if (pi.st !== 'off' && (pi.amt > 0 || pi.paid > 0)) { set('paid', pi.paid); set('left', V.r2(pi.amt - pi.paid)); }
+      if (pi.pays.length) set('payDate', pi.pays[pi.pays.length - 1].date + (pi.pays.length > 1 ? ' (' + int(pi.pays.length) + ' دفعات)' : ''));
+      set('st', SHORT[statusOf(x.r)]);
+      if (x.r.sub) { set('no', x.r.sub.formNo || ''); set('sent', x.r.sub.sentDate || ''); }
       row.rid = x.r.id; return row;
     });
     // previous credit and the credit carried forward do not add up across periods
-    tot[nNum - 4] = ''; tot[nNum - 1] = '';
-    const foot = ['الإجمالي'].concat(new Array(leadCols.length - 1).fill(''), tot.map(n => n === '' ? '' : V.r2(n)), ['', '']);
-    return { cols, groups, rows, foot, pending };
+    const foot = ['الإجمالي'].concat(new Array(L - 1).fill(''), CL.map(([k, , n, sum], i) => n && sum ? V.r2(rows.reduce((a, r) => a + (Number(r[L + i]) || 0), 0)) : ''));
+    return { cols, groups, rows, foot, pending, freeze: L };
   }
   function repData(key) {
     const col = A.col;
@@ -1819,7 +1835,7 @@
       A.MONTHS.forEach((m, i) => {
         if (q && (i + 1) % 3) return;
         const per = y + '-' + String(i + 1).padStart(2, '0'), r = retFor(ui.rmClient, per);
-        list.push({ lead: [(q ? 'الربع المنتهي ' + m : m) + (r && r.kind === 'amended' ? ' (معدل)' : '')], r, note: !r && per < S.M.ym && per > firstPer(ui.rmClient) ? 'لم يُعَدّ' : '' });
+        list.push({ lead: [m + '-' + y + (r && r.kind === 'amended' ? ' (معدل)' : '')], r, note: !r && per < S.M.ym && per > firstPer(ui.rmClient) ? 'لم يُعَدّ' : '' });
       });
       const b = brReport([col(q ? 'الربع' : 'الشهر')], list);
       return Object.assign(b, { title: 'ملخص إقرارات القيمة المضافة بالشهور', ctx: (c.name || '') + ' · سنة ' + y + (q ? ' · ربع سنوي' : ' · شهري'), landscape: true });
@@ -2090,11 +2106,10 @@
           if (ok) { VS.cache.delete(x.id); closeModal(); A.go('vat-list'); toast('تم حذف الإقرار'); }
         });
       }
-      case 'vat-rep-pdf': { const rep = repData(el.dataset.key); rep.cols = rep.cols.map(c => c.fmt ? Object.assign({}, c, { fmt: null }) : c); return A.makePdf(A.fileName(rep.title + ' ' + (rep.ctx || '')) + '.pdf', A.pdfHead(rep.title, rep.ctx) + A.tableHtml(rep) + (rep.extra ? '<h2>' + esc(rep.extra.title) + '</h2>' + A.tableHtml(rep.extra) : ''), rep.landscape); }
+      case 'vat-rep-pdf': { const rep = A.dropCols(repData(el.dataset.key), c => !c.noPdf); rep.cols = rep.cols.map(c => c.fmt ? Object.assign({}, c, { fmt: null }) : c); return A.makePdf(A.fileName(rep.title + ' ' + (rep.ctx || '')) + '.pdf', A.pdfHead(rep.title, rep.ctx) + A.tableHtml(rep) + (rep.extra ? '<h2>' + esc(rep.extra.title) + '</h2>' + A.tableHtml(rep.extra) : ''), rep.landscape); }
       case 'vat-rep-xlsx': {
-        const rep = repData(el.dataset.key);
-        const aoa = (x) => { const rows = (x.groups ? [x.groups.flatMap(([l, n]) => [l || null].concat(new Array(n - 1).fill(null)))] : []).concat([x.cols.map(c => c.h)], x.rows.map(y => y.map(v => v === '' ? null : v))); if (x.foot && x.rows.length) rows.push(x.foot); return rows; };
-        return A.xlsxBook(A.fileName(rep.title) + '.xlsx', [{ name: rep.title, ctx: rep.ctx, rows: aoa(rep) }].concat(rep.extra ? [{ name: rep.extra.title, ctx: rep.ctx, rows: aoa(rep.extra) }] : []));
+        const rep = A.dropCols(repData(el.dataset.key), c => !c.noXlsx);
+        return A.xlsxReps(A.fileName(rep.title + ' ' + (rep.ctx || '')) + '.xlsx', [{ name: rep.title, title: rep.title, ctx: rep.ctx, rep }].concat(rep.extra ? [{ name: rep.extra.title, title: rep.extra.title, ctx: rep.ctx, rep: Object.assign({ landscape: rep.landscape }, rep.extra) }] : []));
       }
     }
   }
