@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-27 02:47">
+<meta name="of-build" content="2026-11-27 06:22">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -107,6 +107,20 @@ td.n { white-space: nowrap; text-align: end; }
 .hbar { display: grid; grid-template-columns: minmax(120px, 220px) 1fr 120px; gap: 10px; align-items: center; margin: 6px 0; font-size: 13px; }
 .hbar div { background: var(--line); height: 12px; border-radius: 99px; overflow: hidden; } .hbar i { display: block; height: 100%; background: var(--crit); }
 .hbar b { text-align: end; font-variant-numeric: tabular-nums; }
+/* tax due for payment */
+.aging { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.aging a { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); border-top: 3px solid var(--line); text-decoration: none; color: inherit; transition: background .15s, box-shadow .15s; }
+.aging a:hover { background: var(--accent-soft); } .aging a.on { box-shadow: 0 0 0 2px var(--accent) inset; }
+.aging small { color: var(--muted); font-size: 12px; } .aging b { font-size: 18px; font-variant-numeric: tabular-nums; } .aging span { color: var(--muted); font-size: 12px; }
+.aging .age-soon { border-top-color: var(--info); } .aging .age-a30 { border-top-color: var(--warn); } .aging .age-a60 { border-top-color: #d9822b; } .aging .age-a90 { border-top-color: var(--crit); } .aging .age-a90p { border-top-color: var(--crit); background: var(--crit-soft); }
+.due-tbl tr.dl-crit td:first-child { box-shadow: inset -3px 0 0 var(--crit); } .due-tbl tr.dl-warn td:first-child { box-shadow: inset -3px 0 0 var(--warn); }
+td.acts { white-space: nowrap; text-align: end; } td.acts .btn + .btn { margin-inline-start: 4px; }
+tr.sub-row td { color: var(--muted); font-size: 13px; } tr.sub-row td:nth-child(2) { padding-inline-start: 22px; }
+.pay-sum { display: flex; flex-wrap: wrap; gap: 26px; } .pay-sum > div { display: flex; flex-direction: column; gap: 2px; }
+.pay-sum small { color: var(--muted); font-size: 12px; } .pay-sum b { font-size: 20px; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.pay-card header .pill { margin-inline-start: 8px; }
+.hm-dot, .vlegend i.hm-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--crit); margin-inline-start: 3px; vertical-align: 1px; }
+.hm-paid { font-style: normal; font-size: 10px; margin-inline-start: 2px; color: var(--ok); }
 .to-mods { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 2px 8px 2px 4px; margin-inline-start: -8px; transition: background .2s, color .2s; }
 .to-mods:hover, .to-mods:focus-visible { background: var(--accent-soft); color: var(--accent); }
 .to-mods-ic { display: inline-grid; place-items: center; width: 0; overflow: hidden; opacity: 0; transition: width .2s, opacity .2s; }

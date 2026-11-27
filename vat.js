@@ -7,7 +7,7 @@
   if (!A || !V) return;
   const { S, C, $, $$, esc, uid, money, int, clean, toast, write, modal, closeModal, confirmBox, fld, inp, val, options, topBar, actBtn } = A;
 
-  const VS = { cache: new Map(), timers: new Map(), saving: 0, err: '', sel: new Set(), selRet: '', undo: new Map() };
+  const VS = { cache: new Map(), timers: new Map(), saving: 0, err: '', sel: new Set(), selRet: '', undo: new Map(), dueSel: new Set(), memo: { of: null, res: new Map() } };
   const STATUS = { draft: ['مسودة', 'mute'], ready: ['جاهز للتقديم', 'info'], submitted: ['مقدَّم', 'acc'], matched: ['مقدَّم ومطابق', 'ok'], diff: ['مقدَّم وبه فروق', 'crit'] };
   const FREQ = { monthly: 'شهري', quarterly: 'ربع سنوي' };
   const S_DT = [[1, 'فاتورة'], [2, 'إشعار إضافة'], [3, 'إشعار خصم (إشعار دائن)'], [5, 'مستهلك نهائي محلي'], [6, 'جهة حكومية'], [7, 'مستهلك نهائي أجنبي (طبيعي)'], [8, 'مستهلك نهائي أجنبي (اعتباري)']];
@@ -18,7 +18,7 @@
   const dtLabel = (side, dt) => ((side === 'S' ? S_DT : P_DT).find(x => x[0] === dt) || [0, String(dt)])[1];
   const isConsumer = (inv) => inv.side === 'S' && (inv.dt === 5 || inv.dt === 7 || inv.dt === 8);
   const ui = S.ui;
-  Object.assign(ui, { dYear: String(new Date().getFullYear()), dClient: '', dStaff: '', vClient: '', vStatus: '', vYear: '', vQ: '', vF: '', vMode: 'group', vSame: '1', rbClient: '', rbSide: 'S', rbFrom: '', rbTo: '', rsYear: '', pClient: '', pQ: '', rmClient: '', rmYear: String(new Date().getFullYear()) });
+  Object.assign(ui, { dYear: String(new Date().getFullYear()), dClient: '', dStaff: '', vClient: '', vStatus: '', vYear: '', vQ: '', vF: '', vMode: 'group', vSame: '1', rbClient: '', rbSide: 'S', rbFrom: '', rbTo: '', rsYear: '', pClient: '', pQ: '', rmClient: '', rmYear: String(new Date().getFullYear()), duClient: '', duStaff: '', duAge: '', stmtClient: '' });
 
   /* ---------------- data helpers ---------------- */
   const rets = () => S.raw.vatReturns || [];
@@ -36,6 +36,12 @@
   }
   /* result of a return: the submitted figure when there is one, otherwise the system's */
   function resultOf(r, depth) {
+    // remembered until the returns change: dashboards ask for the same results many times per screen
+    if (VS.memo.of !== S.raw.vatReturns) { VS.memo.of = S.raw.vatReturns; VS.memo.res = new Map(); }
+    if (VS.memo.res.has(r.id)) return VS.memo.res.get(r.id);
+    const v = resultOfNow(r, depth); VS.memo.res.set(r.id, v); return v;
+  }
+  function resultOfNow(r, depth) {
     const sub = r.sub && r.sub.parsed && r.sub.parsed.summary;
     if (sub && sub.res != null && r.sub.src === 'manual') return sub.res;
     const due = r.sum ? r.sum.due : 0;
@@ -147,6 +153,7 @@
     if (p[0] === 'rep') return { view: 'rep', key: p[1] || 'months' };
     if (p[0] === 'parties') return { view: 'parties' };
     if (p[0] === 'list') return { view: 'list' };
+    if (p[0] === 'due') return { view: 'due', client: p.slice(1).join('-') };
     return { view: 'dash' };
   }
   function page(sub) {
@@ -156,12 +163,14 @@
     if (r.view === 'rep') return pageReports(r.key);
     if (r.view === 'parties') return pageParties();
     if (r.view === 'list') return pageList();
+    if (r.view === 'due') return pageDue(r.client);
     return pageDash();
   }
   function bind(sub) {
     const r = parse(sub);
     if (r.view === 'ret') bindRet(r.id, r.tab);
     if (r.view === 'parties') bindParties();
+    if (r.view === 'due' && !r.client) bindDue();
   }
 
   /* ---------------- dashboard ---------------- */
@@ -240,25 +249,26 @@
 
     // 2) tiles: latest return of each company
     const latest = cl.map(c => all.filter(r => r.client === c.id).sort((a, b) => b.period.localeCompare(a.period))[0]).filter(Boolean);
-    const pay = latest.reduce((a, r) => a + Math.max(0, resOf(r)), 0), cred = latest.reduce((a, r) => a + Math.max(0, -resOf(r)), 0);
+    const cred = latest.reduce((a, r) => a + Math.max(0, -resOf(r)), 0), unpaid = dueList({ client: ui.dClient, staff: ui.dStaff });
     const yr = all.filter(r => r.period.startsWith(y));
     const crit = all.reduce((a, r) => a + ((r.sum && r.sum.crit) || 0), 0);
     h += '<div class="tiles">' +
-      '<div class="tile c2"><span>مستحق السداد (آخر إقرار لكل شركة)</span><b>' + money(pay) + '</b><small>' + int(latest.filter(r => resOf(r) > 0).length) + ' شركة</small></div>' +
+      '<a class="tile c2" href="#vat-due"><span>ضريبة مستحقة لم تُسدَّد</span><b>' + money(unpaid.reduce((a, x) => a + x.left, 0)) + '</b><small>' + int(unpaid.length) + ' إقرار' + (unpaid.some(x => x.late > 0) ? ' · ' + int(unpaid.filter(x => x.late > 0).length) + ' متأخر السداد' : '') + '</small></a>' +
       '<div class="tile c3"><span>أرصدة دائنة مرحّلة</span><b>' + money(cred) + '</b><small>' + int(latest.filter(r => resOf(r) < 0).length) + ' شركة</small></div>' +
       '<a class="tile c4" href="#vat-list"><span>مقدَّمة ومطابقة · ' + esc(y) + '</span><b>' + int(yr.filter(r => statusOf(r) === 'matched').length) + '</b><small>' + int(yr.filter(r => statusOf(r) === 'diff').length) + ' فيها فروق</small></a>' +
       '<div class="tile c5"><span>فواتير عليها ملاحظات لازمة</span><b>' + int(crit) + '</b><small>في ' + int(all.filter(r => r.sum && r.sum.crit).length) + ' إقرار</small></div></div>';
 
     // 3) companies × months
     h += '<section class="card"><header><h2>حالة الإقرارات بالشهور · ' + esc(y) + '</h2><span class="grow"></span><span class="vlegend">' +
-      [['matched', 'مطابق'], ['diff', 'فروق'], ['submitted', 'مقدَّم'], ['ready', 'جاهز'], ['draft', 'مسودة'], ['late', 'متأخر لم يُعَدّ']].map(([k, l]) => '<span><i class="hm-' + k + '"></i>' + l + '</span>').join('') + '</span></header><div class="tablewrap"><table class="heat"><thead><tr><th>الشركة</th><th class="hm-freq-h">دورية الإقرار</th>' + MSHORT.map(m => '<th>' + m + '</th>').join('') + '</tr></thead><tbody>';
+      [['matched', 'مطابق'], ['diff', 'فروق'], ['submitted', 'مقدَّم'], ['ready', 'جاهز'], ['draft', 'مسودة'], ['late', 'متأخر لم يُعَدّ']].map(([k, l]) => '<span><i class="hm-' + k + '"></i>' + l + '</span>').join('') + '<span><i class="hm-dot"></i>متأخر السداد</span></span></header><div class="tablewrap"><table class="heat"><thead><tr><th>الشركة</th><th class="hm-freq-h">دورية الإقرار</th>' + MSHORT.map(m => '<th>' + m + '</th>').join('') + '</tr></thead><tbody>';
     for (const c of cl) {
       h += '<tr><td><a href="#vat-list" data-act="vat-pick" data-client="' + c.id + '" title="' + esc(c.name) + '">' + esc(c.name) + '</a></td><td class="hm-freq">' + (isQ(c) ? 'ربع سنوي' : 'شهري') + '</td>';
       for (let m = 1; m <= 12; m++) {
         const per = y + '-' + String(m).padStart(2, '0');
         if (isQ(c) && m % 3) { h += '<td class="hm-na"></td>'; continue; }
         const r = retFor(c.id, per);
-        if (r) { const st = statusOf(r), res = resOf(r); h += '<td class="hm-' + st + '"><a href="#vat-ret-sum-' + r.id + '" title="' + esc(STATUS[st][0] + ' · ' + (res > 0 ? 'مستحق ' + money(res) : res < 0 ? 'دائن ' + money(-res) : 'صفر')) + '">' + (res > 0 ? short(res) : res < 0 ? '−' + short(-res) : '0') + '</a></td>'; continue; }
+        if (r) { const st = statusOf(r), res = resOf(r), pi = res > 0 ? payInfo(r) : null, owe = pi && pi.left > 0 && pi.late > 0;
+          h += '<td class="hm-' + st + '"><a href="#vat-ret-sum-' + r.id + '" title="' + esc(STATUS[st][0] + ' · ' + (res > 0 ? 'مستحق ' + money(res) + ' · ' + PAYST[pi.st][0] : res < 0 ? 'دائن ' + money(-res) : 'صفر')) + '">' + (res > 0 ? short(res) : res < 0 ? '−' + short(-res) : '0') + (owe ? '<i class="hm-dot"></i>' : pi && pi.st === 'paid' ? '<i class="hm-paid">✓</i>' : '') + '</a></td>'; continue; }
         const late = C.dueDate(ob, per) < today && periodsOf(c, per).includes(per);
         h += '<td class="' + (late ? 'hm-late' : '') + '">' + (late && A.writable() ? '<a href="#" data-act="vat-new" data-client="' + c.id + '" data-period="' + per + '" title="لم يُعَدّ · اضغط لإنشائه">!</a>' : '') + '</td>';
       }
@@ -270,6 +280,7 @@
     const act = [];
     for (const r of all.filter(r => statusOf(r) === 'diff')) act.push(['crit', 'فروق بعد المطابقة', r]);
     for (const r of all.filter(r => statusOf(r) === 'ready')) act.push(['info', 'جاهز ولم يُقدَّم بعد', r]);
+    for (const x of unpaid.filter(x => x.late > 0)) act.push([x.late > 60 ? 'crit' : 'warn', 'ضريبة ' + money(x.left) + ' لم تُسدَّد · ' + lateText(x), x.r]);
     for (const r of all.filter(r => r.sum && (r.sum.prior || r.sum.outP))) act.push(['warn', (r.sum.prior ? int(r.sum.prior) + ' فاتورة شراء مدرجة في إقرار آخر' : '') + (r.sum.prior && r.sum.outP ? ' · ' : '') + (r.sum.outP ? int(r.sum.outP) + ' مستند تاريخه خارج الفترة' : ''), r]);
     for (const c of cl) {
       const list = all.filter(r => r.client === c.id).sort((a, b) => b.period.localeCompare(a.period));
@@ -295,6 +306,264 @@
     return h + '</div>';
   }
 
+  /* ---------------- tax due for payment (سداد الضريبة) ----------------
+     Each return may carry pay: [{id, date, amount, method, ref, note, at}]. What a client owes for a period is the result of
+     the return that counts for it (the latest amended one), less every payment recorded on any return of that period. */
+  const PAYST = { unpaid: ['مستحق ولم يُسدَّد', 'crit'], partial: ['مسدد جزئيًا', 'warn'], paid: ['مسدد', 'ok'], none: ['لا يوجد مستحق', 'mute'], off: ['قبل بداية المتابعة', 'mute'] };
+  const PAY_METHODS = ['تحويل بنكي', 'سداد إلكتروني', 'شيك', 'نقدًا بالمأمورية', 'خصم من رصيد دائن'];
+  const AGE = [['soon', 'لم يحل موعده'], ['a30', 'متأخر حتى 30 يومًا'], ['a60', 'متأخر 31 – 60 يومًا'], ['a90', 'متأخر 61 – 90 يومًا'], ['a90p', 'متأخر أكثر من 90 يومًا']];
+  const ageOf = (late) => late <= 0 ? 'soon' : late <= 30 ? 'a30' : late <= 60 ? 'a60' : late <= 90 ? 'a90' : 'a90p';
+  const payPill = (k) => '<span class="pill ' + PAYST[k][1] + '">' + esc(PAYST[k][0]) + '</span>';
+  const payCfg = () => { const s = A.settings(); return { from: s.vatPayFrom || '', rate: Number(s.vatLateRate) || 0, part: s.vatLatePart !== false }; };
+  const canPay = () => !!S.db && S.canWrite !== false && (!A.level || A.level('vat') === 'edit');
+  const LRM = '‎';
+  const numIn = (v) => C.round2(String(v == null ? '' : v).replace(/[^\d.\-]/g, ''));
+  const grp = (n) => { const s = String(C.round2(n)); const [i, f] = s.split('.'); return i.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (f ? '.' + f : ''); };
+  function paysOf(cid, period) {
+    return rets().filter(r => r.client === cid && r.period === period)
+      .flatMap(r => (r.pay || []).map(p => Object.assign({ ret: r.id }, p))).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }
+  function payInfo(r) {
+    const cfg = payCfg(), today = C.todayISO();
+    const amt = V.r2(Math.max(0, resultOf(r)));
+    const pays = paysOf(r.client, r.period), paid = V.r2(pays.reduce((a, p) => a + (Number(p.amount) || 0), 0));
+    const due = C.dueDate(vatOb(), r.period);
+    const off = !!cfg.from && r.period < cfg.from && !pays.length;
+    let left = V.r2(Math.max(0, amt - paid));
+    const st = amt <= 0 && !paid ? 'none' : off ? 'off' : left <= 0.004 ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
+    if (st === 'off' || st === 'none') left = 0;
+    const late = left > 0 ? Math.max(0, C.daysBetween(due, today)) : 0;
+    const months = late > 0 ? (cfg.part ? Math.ceil(late / 30) : Math.floor(late / 30)) : 0;
+    const extra = cfg.rate && left > 0 ? V.r2(left * cfg.rate / 100 * months) : 0;
+    return { r, amt, paid, pays, left, due, late, toGo: C.daysBetween(today, due), st, months, extra, age: ageOf(late) };
+  }
+  /* every period still owed, latest deadline missed first */
+  function dueList(opt) {
+    opt = opt || {};
+    const out = [];
+    for (const c of S.M.clients) {
+      if ((opt.client && c.id !== opt.client) || (opt.staff && c.assignedTo !== opt.staff)) continue;
+      for (const per of new Set(rets().filter(r => r.client === c.id).map(r => r.period))) {
+        const p = payInfo(retFor(c.id, per));
+        if (p.left > 0) out.push(Object.assign({ c, key: c.id + '|' + per }, p));
+      }
+    }
+    return out.sort((a, b) => b.late - a.late || a.due.localeCompare(b.due) || b.left - a.left);
+  }
+  function dueSummary() {
+    if (!S.M) return { total: 0, lateTotal: 0, n: 0, nLate: 0, extra: 0, rows: [] };
+    const all = dueList(), late = all.filter(x => x.late > 0);
+    return { total: all.reduce((a, x) => a + x.left, 0), lateTotal: late.reduce((a, x) => a + x.left, 0), extra: all.reduce((a, x) => a + x.extra, 0),
+      n: all.length, nLate: late.length, clients: new Set(all.map(x => x.c.id)).size, rows: all };
+  }
+  const lateText = (p) => p.late > 0 ? 'متأخر ' + int(p.late) + ' يوم' : p.toGo === 0 ? 'آخر موعد اليوم' : 'متبقٍّ ' + int(p.toGo) + ' يوم';
+
+  function pageDue(cid) {
+    if (cid) return pageTaxStatement(cid);
+    const cfg = payCfg(), all = dueList({ client: ui.duClient, staff: ui.duStaff });
+    const list = all.filter(x => !ui.duAge || (ui.duAge === 'late' ? x.late > 0 : x.age === ui.duAge));
+    const sum = (arr, f) => arr.reduce((a, x) => a + (f ? f(x) : x.left), 0);
+    const late = all.filter(x => x.late > 0), soon = all.filter(x => x.late <= 0);
+    let h = topBar('الضريبة المستحقة السداد', 'ضريبة القيمة المضافة المستحقة من واقع الإقرارات، وما سُدِّد منها وما تأخر',
+      '<button type="button" class="btn" data-act="vat-pay-cfg">⚙ إعدادات المتابعة</button>' +
+      (S.downloads && all.length ? '<button type="button" class="btn" data-act="vat-rep-pdf" data-key="due">⤓ PDF</button><button type="button" class="btn" data-act="vat-rep-xlsx" data-key="due">⤓ Excel</button>' : '')) + '<div class="content">';
+    h += '<div class="tiles">' +
+      '<a class="tile c2" href="#" data-act="vat-due-age" data-v=""><span>إجمالي غير المسدد</span><b>' + money(sum(all)) + '</b><small>' + int(all.length) + ' إقرار · ' + int(new Set(all.map(x => x.c.id)).size) + ' شركة</small></a>' +
+      '<a class="tile c5" href="#" data-act="vat-due-age" data-v="late"><span>تجاوز موعد السداد</span><b class="' + (late.length ? 'match-bad' : '') + '">' + money(sum(late)) + '</b><small>' + int(late.length) + ' إقرار</small></a>' +
+      '<a class="tile c4" href="#" data-act="vat-due-age" data-v="soon"><span>لم يحل موعده بعد</span><b>' + money(sum(soon)) + '</b><small>' + int(soon.length) + ' إقرار</small></a>' +
+      (cfg.rate ? '<div class="tile c3"><span>ضريبة إضافية تقديرية</span><b>' + money(sum(all, x => x.extra)) + '</b><small>' + esc(String(cfg.rate)) + '% عن كل شهر تأخير</small></div>' : '') + '</div>';
+    // aging: how long the unpaid tax has been late
+    h += '<section class="card"><header><h2>أعمار الضريبة غير المسددة</h2><span class="hint">اضغط على الفئة لتصفية الجدول</span></header><div class="body"><div class="aging">' +
+      AGE.map(([k, l]) => { const g = all.filter(x => x.age === k); return '<a href="#" data-act="vat-due-age" data-v="' + k + '" class="age-' + k + (ui.duAge === k ? ' on' : '') + '"><small>' + esc(l) + '</small><b>' + money(sum(g)) + '</b><span>' + int(g.length) + ' إقرار</span></a>'; }).join('') + '</div></div></section>';
+    const oldOnes = all.filter(x => x.late > 60);
+    if (!cfg.from && oldOnes.length) h += '<div class="note">فيه ' + int(oldOnes.length) + ' إقرار متأخر أكثر من شهرين. لو الإقرارات القديمة اتسددت قبل استخدام البرنامج، حدد «بداية متابعة السداد» من ⚙ إعدادات المتابعة فتختفي من هنا، أو حددها من الجدول واضغط «تسجيل المحدد كمسدد».</div>';
+    h += '<div class="toolbar"><select data-ui="duClient">' + options(A.clientOptions(true), ui.duClient, 'جميع الشركات') + '</select>' +
+      '<select data-ui="duStaff">' + options(S.M.staff.filter(x => x.active !== false).map(x => [x.id, x.name]), ui.duStaff, 'جميع الموظفين') + '</select>' +
+      '<select data-ui="duAge">' + options([['late', 'المتأخر فقط']].concat(AGE), ui.duAge, 'كل الأعمار') + '</select>' +
+      (ui.duClient || ui.duStaff || ui.duAge ? '<button type="button" class="btn sm" data-act="vat-due-clear">إلغاء التصفية</button>' : '') +
+      '<span class="grow"></span>' + (canPay() && VS.dueSel.size ? '<span class="hint">' + int(VS.dueSel.size) + ' محدد</span><button type="button" class="btn primary" data-act="vat-pay-bulk">تسجيل المحدد كمسدد</button>' : '') + '</div>';
+    const showX = !!cfg.rate;
+    h += '<div class="card"><div class="tablewrap"><table class="vat-tbl due-tbl"><thead><tr>' + (canPay() ? '<th><input type="checkbox" data-due-all' + (list.length && list.every(x => VS.dueSel.has(x.key)) ? ' checked' : '') + ' title="تحديد الكل"></th>' : '') +
+      '<th>الشركة</th><th>الفترة</th><th>حالة الإقرار</th><th>آخر موعد للسداد</th><th>التأخير</th><th class="n">المستحق</th><th class="n">المسدد</th><th class="n">المتبقي</th>' + (showX ? '<th class="n">ض. إضافية تقديرية</th>' : '') + '<th></th></tr></thead><tbody>';
+    if (!list.length) h += '<tr><td colspan="' + (showX ? 11 : 10) + '" class="empty">' + (all.length ? 'لا يوجد مستحق بهذه الشروط.' : 'لا توجد ضريبة مستحقة غير مسددة. 👌') + '</td></tr>';
+    for (const x of list) {
+      h += '<tr class="' + (x.late > 60 ? 'dl-crit' : x.late > 0 ? 'dl-warn' : '') + '">' + (canPay() ? '<td><input type="checkbox" data-due-sel="' + esc(x.key) + '"' + (VS.dueSel.has(x.key) ? ' checked' : '') + '></td>' : '') +
+        '<td><a href="#vat-due-' + x.c.id + '" title="كشف الحساب الضريبي">' + esc(x.c.name) + '</a></td><td><a href="#vat-ret-sum-' + x.r.id + '">' + esc(periodLabel(x.r)) + '</a></td><td>' + pill(statusOf(x.r)) + '</td>' +
+        '<td class="num">' + esc(x.due) + '</td><td><span class="iss ' + (x.late > 60 ? 'crit' : x.late > 0 ? 'warn' : 'info') + '">' + esc(lateText(x)) + '</span></td>' +
+        '<td class="n">' + money(x.amt) + '</td><td class="n">' + (x.paid ? money(x.paid) : '') + '</td><td class="n pos"><b>' + money(x.left) + '</b></td>' + (showX ? '<td class="n">' + (x.extra ? money(x.extra) : '') + '</td>' : '') +
+        '<td class="acts">' + (canPay() ? '<button type="button" class="btn sm primary" data-act="vat-pay" data-id="' + x.r.id + '">تسجيل سداد</button>' : '') + '<button type="button" class="btn sm" data-act="vat-pay-remind" data-client="' + x.c.id + '">تذكير</button></td></tr>';
+    }
+    h += '</tbody>' + (list.length ? '<tfoot><tr>' + (canPay() ? '<td></td>' : '') + '<td colspan="5">الإجمالي</td><td class="n">' + money(sum(list, x => x.amt)) + '</td><td class="n">' + money(sum(list, x => x.paid)) + '</td><td class="n">' + money(sum(list)) + '</td>' + (showX ? '<td class="n">' + money(sum(list, x => x.extra)) + '</td>' : '') + '<td></td></tr></tfoot>' : '') + '</table></div></div>';
+    if (showX) h += '<div class="hint" style="padding:6px 4px">الضريبة الإضافية تقديرية: ' + esc(String(cfg.rate)) + '% من المتبقي عن كل شهر تأخير' + (cfg.part ? ' (جزء الشهر يُحسب شهرًا)' : '') + '، وتُراجَع على القانون الساري قبل الاعتماد عليها.</div>';
+    return h + '</div>';
+  }
+  function bindDue() {
+    $$('[data-due-sel]').forEach(el => el.addEventListener('change', () => { if (el.checked) VS.dueSel.add(el.dataset.dueSel); else VS.dueSel.delete(el.dataset.dueSel); A.renderPage(); }));
+    const all = $('[data-due-all]');
+    if (all) all.addEventListener('change', () => { for (const el of $$('[data-due-sel]')) { if (all.checked) VS.dueSel.add(el.dataset.dueSel); else VS.dueSel.delete(el.dataset.dueSel); } A.renderPage(); });
+  }
+
+  /* the client's tax account: what each return made due, and every payment against it */
+  function statementRows(cid) {
+    const pers = Array.from(new Set(rets().filter(r => r.client === cid).map(r => r.period))).sort();
+    const rows = []; let bal = 0, dr = 0, cr = 0;
+    for (const per of pers) {
+      const p = payInfo(retFor(cid, per));
+      if (p.st === 'none' && !p.pays.length) continue;
+      if (p.st === 'off') continue;
+      bal += p.amt; dr += p.amt;
+      rows.push({ p, date: p.due, text: 'ضريبة مستحقة · إقرار ' + periodLabel(p.r) + (p.r.kind === 'amended' ? ' (معدل)' : ''), dr: p.amt, cr: 0, bal: V.r2(bal) });
+      for (const x of p.pays) { bal -= Number(x.amount) || 0; cr += Number(x.amount) || 0; rows.push({ p, pay: x, date: x.date, text: 'سداد · ' + (x.method || '') + (x.ref ? ' · مرجع ' + x.ref : '') + (x.note ? ' · ' + x.note : ''), dr: 0, cr: Number(x.amount) || 0, bal: V.r2(bal) }); }
+    }
+    return { rows, dr: V.r2(dr), cr: V.r2(cr), bal: V.r2(bal) };
+  }
+  function pageTaxStatement(cid) {
+    const c = client(cid);
+    if (!c) return topBar('شركة غير موجودة') + '<div class="content"><div class="card"><div class="empty"><a href="#vat-due">العودة</a></div></div></div>';
+    const st = statementRows(cid), open = dueList({ client: cid });
+    ui.stmtClient = cid;
+    let h = topBar('كشف الحساب الضريبي · ' + c.name, 'ضريبة القيمة المضافة المستحقة من الإقرارات والمسدد منها',
+      '<button type="button" class="btn" data-act="vat-pay-remind" data-client="' + cid + '"' + (open.length ? '' : ' disabled') + '>تذكير بالسداد</button>' +
+      (S.downloads ? '<button type="button" class="btn" data-act="vat-rep-pdf" data-key="stmt">⤓ PDF</button><button type="button" class="btn" data-act="vat-rep-xlsx" data-key="stmt">⤓ Excel</button>' : '')) + '<div class="content">';
+    h += '<div class="tiles"><div class="tile c1"><span>إجمالي المستحق من الإقرارات</span><b>' + money(st.dr) + '</b></div><div class="tile c3"><span>إجمالي المسدد</span><b>' + money(st.cr) + '</b></div>' +
+      '<div class="tile ' + (st.bal > 0 ? 'c2' : 'c4') + '"><span>' + (st.bal > 0 ? 'الرصيد المستحق' : 'الرصيد') + '</span><b>' + money(Math.abs(st.bal)) + '</b><small>' + (open.some(x => x.late > 0) ? 'منه متأخر ' + money(open.filter(x => x.late > 0).reduce((a, x) => a + x.left, 0)) : '') + '</small></div></div>';
+    h += '<div class="card"><div class="tablewrap"><table class="vat-tbl"><thead><tr><th>التاريخ</th><th>البيان</th><th class="n">مدين (مستحق)</th><th class="n">دائن (مسدد)</th><th class="n">الرصيد</th><th>الحالة</th><th></th></tr></thead><tbody>';
+    if (!st.rows.length) h += '<tr><td colspan="7" class="empty">لا توجد ضريبة مستحقة على هذه الشركة' + (payCfg().from ? ' منذ بداية متابعة السداد' : '') + '.</td></tr>';
+    for (const x of st.rows) {
+      h += '<tr' + (x.pay ? ' class="sub-row"' : '') + '><td class="num">' + esc(x.date) + '</td><td>' + (x.pay ? esc(x.text) : '<a href="#vat-ret-sum-' + x.p.r.id + '">' + esc(x.text) + '</a>') + '</td><td class="n">' + (x.dr ? money(x.dr) : '') + '</td><td class="n">' + (x.cr ? money(x.cr) : '') + '</td><td class="n">' + money(x.bal) + '</td>' +
+        '<td>' + (x.pay ? '' : payPill(x.p.st) + (x.p.late > 0 ? ' <span class="iss ' + (x.p.late > 60 ? 'crit' : 'warn') + '">' + esc(lateText(x.p)) + '</span>' : '')) + '</td>' +
+        '<td class="acts">' + (!x.pay && x.p.left > 0 && canPay() ? '<button type="button" class="btn sm primary" data-act="vat-pay" data-id="' + x.p.r.id + '">تسجيل سداد</button>' : '') + '</td></tr>';
+    }
+    return h + '</tbody>' + (st.rows.length ? '<tfoot><tr><td colspan="2">الإجمالي</td><td class="n">' + money(st.dr) + '</td><td class="n">' + money(st.cr) + '</td><td class="n">' + money(st.bal) + '</td><td colspan="2"></td></tr></tfoot>' : '') + '</table></div></div></div>';
+  }
+  function dueRep() {
+    const cfg = payCfg(), col = A.col, list = dueList({ client: ui.duClient, staff: ui.duStaff }).filter(x => !ui.duAge || (ui.duAge === 'late' ? x.late > 0 : x.age === ui.duAge));
+    const rows = list.map(x => [x.c.name, periodLabel(x.r), STATUS[statusOf(x.r)][0], x.due, x.late > 0 ? x.late : '', x.amt, x.paid || '', x.left].concat(cfg.rate ? [x.extra || ''] : []));
+    const s = (i) => rows.reduce((a, r) => a + (Number(r[i]) || 0), 0);
+    return { title: 'الضريبة المستحقة السداد', ctx: 'حتى ' + C.todayISO() + (ui.duClient ? ' · ' + A.clientName(ui.duClient) : '') + (ui.duAge ? ' · ' + (ui.duAge === 'late' ? 'المتأخر فقط' : AGE.find(a => a[0] === ui.duAge)[1]) : ''), landscape: true,
+      cols: [col('الشركة'), col('الفترة'), col('حالة الإقرار'), col('آخر موعد للسداد'), col('أيام التأخير'), col('المستحق', 1), col('المسدد', 1), col('المتبقي', 1)].concat(cfg.rate ? [col('ض. إضافية تقديرية', 1)] : []),
+      rows, foot: ['الإجمالي', '', '', '', '', s(5), s(6), s(7)].concat(cfg.rate ? [s(8)] : []) };
+  }
+  function stmtRep() {
+    const cid = ui.stmtClient, st = statementRows(cid), col = A.col;
+    return { title: 'كشف الحساب الضريبي – القيمة المضافة', ctx: A.clientName(cid) + ' · حتى ' + C.todayISO(),
+      cols: [col('التاريخ'), col('البيان'), col('مدين (مستحق)', 1), col('دائن (مسدد)', 1), col('الرصيد', 1)],
+      rows: st.rows.map(x => [x.date, x.text, x.dr || '', x.cr || '', x.bal]), foot: ['الإجمالي', '', st.dr, st.cr, st.bal] };
+  }
+
+  function openPay(id) {
+    if (!canPay()) return;
+    const r0 = retById(id); if (!r0) return;
+    const r = retFor(r0.client, r0.period) || r0, p = payInfo(r), c = client(r.client) || {};
+    const body = '<form id="vp-form" class="form"><div class="field full"><div class="note info"><b>' + esc(c.name || '') + '</b> · ' + esc(periodLabel(r)) + '<br>المستحق ' + money(p.amt) + ' · المسدد ' + money(p.paid) + ' · <b>المتبقي ' + money(p.left) + '</b> · آخر موعد ' + esc(p.due) + '</div></div>' +
+      fld('vp-date', 'تاريخ السداد', inp('vp-date', C.todayISO(), 'date', ' required')) +
+      fld('vp-amt', 'المبلغ المسدد', '<input type="text" inputmode="decimal" id="vp-amt" value="' + esc(grp(p.left)) + '" required>') +
+      fld('vp-method', 'طريقة السداد', '<select id="vp-method">' + options(PAY_METHODS, PAY_METHODS[0]) + '</select>') +
+      fld('vp-ref', 'رقم المرجع / إيصال السداد', inp('vp-ref', '')) + fld('vp-note', 'ملاحظة', inp('vp-note', ''), true) + '<div class="field full err" id="vp-err"></div></form>';
+    const bg = modal('تسجيل سداد ضريبة القيمة المضافة', body, '<button type="button" class="btn" data-close>إلغاء</button><button type="submit" form="vp-form" class="btn primary">حفظ السداد</button>');
+    const amt = $('#vp-amt', bg);
+    amt.addEventListener('blur', () => { const n = numIn(amt.value); if (n) amt.value = grp(n); });
+    amt.addEventListener('focus', () => amt.select());
+    $('#vp-form', bg).addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const n = numIn(amt.value), err = $('#vp-err', bg);
+      if (!(n > 0)) return (err.textContent = 'اكتب المبلغ المسدد.');
+      if (!val('vp-date', bg)) return (err.textContent = 'اختر تاريخ السداد.');
+      if (n > p.left + 0.004 && p.left > 0 && !bg.dataset.over) { bg.dataset.over = '1'; return (err.textContent = 'المبلغ أكبر من المتبقي (' + money(p.left) + '). اضغط «حفظ السداد» مرة أخرى لو ده مقصود.'); }
+      const pay = { id: uid(), date: val('vp-date', bg), amount: n, method: val('vp-method', bg), ref: val('vp-ref', bg), note: val('vp-note', bg), at: new Date().toISOString() };
+      if (await write(() => S.db.doc('vatReturns/' + r.id).update({ pay: clean((r.pay || []).concat([pay])) }))) { closeModal(); toast('تم تسجيل السداد'); }
+    });
+  }
+  function delPay(retId, pid) {
+    const r = retById(retId); if (!r || !canPay()) return;
+    const x = (r.pay || []).find(p => p.id === pid); if (!x) return;
+    confirmBox('حذف السداد', 'حذف سداد ' + money(x.amount) + ' بتاريخ ' + x.date + '؟', 'حذف', async () => {
+      if (await write(() => S.db.doc('vatReturns/' + r.id).update({ pay: clean((r.pay || []).filter(p => p.id !== pid)) }))) { closeModal(); toast('تم الحذف'); }
+    });
+  }
+  function openBulkPay() {
+    if (!canPay()) return;
+    const sel = dueList().filter(x => VS.dueSel.has(x.key));
+    if (!sel.length) return toast('حدد إقرارًا واحدًا على الأقل.');
+    const total = sel.reduce((a, x) => a + x.left, 0);
+    const body = '<form id="vb-form" class="form"><div class="field full"><div class="note info">سيُسجَّل سداد <b>المتبقي بالكامل</b> لـ ' + int(sel.length) + ' إقرار، إجمالي ' + money(total) + ' ' + esc(A.cur()) + '.</div></div>' +
+      fld('vb-when', 'تاريخ السداد', '<select id="vb-when">' + options([['due', 'آخر موعد لكل إقرار (للإقرارات القديمة)'], ['date', 'تاريخ واحد للكل']], 'due') + '</select>') +
+      fld('vb-date', 'التاريخ', inp('vb-date', C.todayISO(), 'date')) +
+      fld('vb-method', 'طريقة السداد', '<select id="vb-method">' + options(PAY_METHODS, PAY_METHODS[0]) + '</select>') + fld('vb-ref', 'مرجع / ملاحظة', inp('vb-ref', '')) + '</form>';
+    const bg = modal('تسجيل المحدد كمسدد', body, '<button type="button" class="btn" data-close>إلغاء</button><button type="submit" form="vb-form" class="btn primary">تسجيل ' + int(sel.length) + ' سداد</button>');
+    const sync = () => { $('#vb-date', bg).closest('.field').style.display = val('vb-when', bg) === 'date' ? '' : 'none'; };
+    $('#vb-when', bg).addEventListener('change', sync); sync();
+    $('#vb-form', bg).addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const when = val('vb-when', bg), d = val('vb-date', bg), method = val('vb-method', bg), ref = val('vb-ref', bg);
+      const ok = await write(async () => {
+        for (const x of sel) {
+          const r = retById(x.r.id) || x.r;
+          await S.db.doc('vatReturns/' + r.id).update({ pay: clean((r.pay || []).concat([{ id: uid(), date: when === 'due' ? x.due : d, amount: x.left, method, ref, note: '', at: new Date().toISOString() }])) });
+        }
+      });
+      if (ok) { VS.dueSel.clear(); closeModal(); toast('تم تسجيل ' + int(sel.length) + ' سداد'); }
+    });
+  }
+  function openPayCfg() {
+    const cfg = payCfg(), w = canPay(), dis = w ? '' : ' disabled';
+    const body = '<form id="vc-form" class="form">' +
+      fld('vc-from', 'بداية متابعة السداد (الإقرارات قبل هذا الشهر لا تظهر كمستحقة)', inp('vc-from', cfg.from, 'month', dis)) +
+      fld('vc-rate', 'نسبة الضريبة الإضافية التقديرية عن كل شهر تأخير (%) — اتركها فارغة لإخفائها', inp('vc-rate', cfg.rate || '', 'number', ' step="0.01" min="0"' + dis)) +
+      '<div class="field full"><label class="inl"><input type="checkbox" id="vc-part"' + (cfg.part ? ' checked' : '') + dis + '> جزء الشهر يُحسب شهرًا كاملًا</label></div>' +
+      '<div class="field full"><div class="note">الضريبة الإضافية في البرنامج تقدير للمتابعة فقط، فراجع النسبة وطريقة الحساب على القانون الساري.</div></div></form>';
+    const bg = modal('إعدادات متابعة السداد', body, '<button type="button" class="btn" data-close>إغلاق</button>' + (w ? '<button type="submit" form="vc-form" class="btn primary">حفظ</button>' : ''));
+    $('#vc-form', bg).addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      await A.saveSettings({ vatPayFrom: val('vc-from', bg), vatLateRate: Number(val('vc-rate', bg)) || 0, vatLatePart: $('#vc-part', bg).checked });
+      closeModal();
+    });
+  }
+  function remindText(cid) {
+    const c = client(cid) || {}, s = A.settings(), list = dueList({ client: cid }).sort((a, b) => a.r.period.localeCompare(b.r.period));
+    const total = list.reduce((a, x) => a + x.left, 0);
+    return { c, list, total, text: 'السادة / ' + (c.name || '') + '\nتحية طيبة وبعد،\nنحيطكم علمًا بأن ضريبة القيمة المضافة المستحقة السداد على شركتكم حتى تاريخ ' + C.todayISO() + ' كالتالي:\n' +
+      list.map(x => '• ' + periodLabel(x.r) + ': ' + money(x.left) + ' ' + A.cur() + ' – آخر موعد ' + x.due + (x.late > 0 ? '، متأخر ' + x.late + ' يوم' : '')).join('\n') +
+      '\nالإجمالي: ' + money(total) + ' ' + A.cur() + '\nنرجو التكرم بالسداد في أقرب وقت تجنبًا لمقابل التأخير، وإرسال ما يفيد السداد للمكتب.\nمع خالص التحية،\n' + (s.officeName || '') + (s.phone ? '\n' + s.phone : '') };
+  }
+  function openRemind(cid) {
+    const t = remindText(cid);
+    if (!t.list.length) return toast('لا توجد ضريبة مستحقة على هذه الشركة.');
+    const phone = String(t.c.phone || '').replace(/\D/g, '').replace(/^0/, '20');
+    const bg = modal('تذكير بسداد ضريبة القيمة المضافة', '<textarea id="vr-text" style="min-height:240px">' + esc(t.text) + '</textarea>',
+      '<button type="button" class="btn" data-close>إغلاق</button><button type="button" class="btn" id="vr-copy">نسخ النص</button>' + (S.downloads ? '<button type="button" class="btn" id="vr-pdf">⤓ خطاب PDF</button>' : '') +
+      (phone ? '<a class="btn primary" target="_blank" rel="noopener" id="vr-wa" href="#">فتح في واتساب</a>' : ''));
+    $('#vr-copy', bg).addEventListener('click', async () => { try { await navigator.clipboard.writeText($('#vr-text', bg).value); toast('تم نسخ النص'); } catch (e) { $('#vr-text', bg).select(); toast('حدد النص وانسخه يدويًا', true); } });
+    const wa = $('#vr-wa', bg); if (wa) { const upd = () => { wa.href = 'https://wa.me/' + phone + '?text=' + encodeURIComponent($('#vr-text', bg).value); }; upd(); $('#vr-text', bg).addEventListener('input', upd); }
+    const pdf = $('#vr-pdf', bg); if (pdf) pdf.addEventListener('click', () => remindPdf(cid));
+  }
+  function remindPdf(cid) {
+    const t = remindText(cid), s = A.settings();
+    const rep = { cols: [A.col('الفترة'), A.col('آخر موعد للسداد'), A.col('أيام التأخير'), A.col('المستحق', 1), A.col('المسدد', 1), A.col('المتبقي', 1)],
+      rows: t.list.map(x => [periodLabel(x.r), x.due, x.late > 0 ? x.late : '', x.amt, x.paid || '', x.left]), foot: ['الإجمالي', '', '', t.list.reduce((a, x) => a + x.amt, 0), t.list.reduce((a, x) => a + x.paid, 0), t.total] };
+    const inner = A.pdfHead('تذكير بسداد ضريبة القيمة المضافة', t.c.name || '') +
+      '<p>السادة / <b>' + esc(t.c.name || '') + '</b></p><p>تحية طيبة وبعد،</p><p>نحيطكم علمًا بأن ضريبة القيمة المضافة المستحقة السداد على شركتكم حتى تاريخ ' + LRM + esc(C.todayISO()) + LRM + ' بيانها كالتالي:</p>' +
+      A.tableHtml(rep) + '<p>نرجو التكرم بالسداد في أقرب وقت تجنبًا لمقابل التأخير، وموافاة المكتب بما يفيد السداد.</p><p>وتفضلوا بقبول فائق الاحترام،</p>' +
+      '<div class="sign"><div>' + esc(s.officeName || '') + '</div><div>محاسب قانوني</div></div>';
+    A.makePdf(A.fileName('تذكير سداد ضريبة ' + (t.c.name || '')) + '.pdf', inner, false);
+  }
+  /* the payment box on a return's summary tab */
+  function payCard(r0) {
+    const r = retFor(r0.client, r0.period) || r0, p = payInfo(r);
+    if (p.st === 'none' && !p.pays.length) return '';
+    let h = '<section class="card pay-card"><header><h2>سداد الضريبة</h2>' + payPill(p.st) + (p.late > 0 ? ' <span class="iss ' + (p.late > 60 ? 'crit' : 'warn') + '">' + esc(lateText(p)) + '</span>' : '') + '<span class="grow"></span>' +
+      (p.left > 0 && canPay() ? '<button type="button" class="btn sm primary" data-act="vat-pay" data-id="' + r.id + '">+ تسجيل سداد</button>' : '') +
+      '<a class="btn sm" href="#vat-due-' + r.client + '">كشف الحساب الضريبي</a></header><div class="body">';
+    if (r.id !== r0.id) h += '<div class="note info" style="margin-bottom:10px">السداد يُتابَع على الإقرار المعدل لنفس الفترة، لأنه المعتمد.</div>';
+    if (p.st === 'off') h += '<div class="note info" style="margin-bottom:10px">الفترة قبل «بداية متابعة السداد» في الإعدادات، فلا تظهر في المستحقات.</div>';
+    h += '<div class="pay-sum"><div><small>المستحق السداد</small><b>' + money(p.amt) + '</b></div><div><small>المسدد</small><b>' + money(p.paid) + '</b></div><div><small>المتبقي</small><b class="' + (p.left > 0 ? 'match-bad' : 'match-ok') + '">' + money(p.left) + '</b></div>' +
+      '<div><small>آخر موعد للسداد</small><b class="num">' + esc(p.due) + '</b></div>' + (p.extra ? '<div><small>ض. إضافية تقديرية</small><b>' + money(p.extra) + '</b></div>' : '') + '</div>';
+    if (p.pays.length) h += '<div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>تاريخ السداد</th><th class="n">المبلغ</th><th>الطريقة</th><th>المرجع</th><th>ملاحظة</th><th></th></tr></thead><tbody>' +
+      p.pays.map(x => '<tr><td class="num">' + esc(x.date) + '</td><td class="n">' + money(x.amount) + '</td><td>' + esc(x.method || '') + '</td><td class="num">' + esc(x.ref || '') + '</td><td>' + esc(x.note || '') + '</td><td>' +
+        (canPay() ? '<button type="button" class="btn sm danger" data-act="vat-pay-del" data-id="' + x.ret + '" data-pid="' + esc(x.id) + '">حذف</button>' : '') + '</td></tr>').join('') + '</tbody></table></div>';
+    return h + '</div></section>';
+  }
+
   /* ---------------- list ---------------- */
   function pageList() {
     const all = rets(), years = Array.from(new Set(all.map(r => r.period.slice(0, 4)))).sort().reverse();
@@ -316,7 +585,7 @@
       const s = r.sum || {}, prev = prevCredit(r), res = V.r2((s.due || 0) - prev), st = statusOf(r);
       h += '<tr><td><a href="#vat-ret-sum-' + r.id + '">' + esc(A.clientName(r.client)) + '</a>' + (r.kind === 'amended' ? ' <span class="pill warn">معدل</span>' : '') + '</td><td>' + esc(periodLabel(r)) + '</td><td>' + esc(FREQ[r.freq] || '') + '</td>' +
         '<td class="n">' + money(s.sales) + '</td><td class="n">' + money(s.out) + '</td><td class="n">' + money(s.inp) + '</td><td class="n">' + money(prev) + '</td>' +
-        '<td class="n pos">' + (res > 0 ? money(res) : '') + '</td><td class="n neg">' + (res < 0 ? money(-res) : '') + '</td><td>' + pill(st) + (s.crit ? ' <span class="iss crit">' + int(s.crit) + ' ملاحظة</span>' : '') + '</td><td class="num">' + (r.sub && r.sub.formNo ? (r.sub.fileChunks ? '<a href="#" data-act="vat-dl-sub" data-id="' + r.id + '" title="تنزيل الإقرار المقدَّم PDF">' + esc(r.sub.formNo) + ' ⤓</a>' : '<a href="#vat-ret-match-' + r.id + '" title="لم يُحفظ ملف هذا الإقرار؛ اضغط لرفعه">' + esc(r.sub.formNo) + ' <span class="iss warn">ارفع الملف</span></a>') : '') + '</td><td class="num">' + esc(r.sub ? r.sub.sentDate || '' : '') + '</td></tr>';
+        '<td class="n pos">' + (res > 0 ? money(res) + (() => { const pi = payInfo(retFor(r.client, r.period) || r); return pi.st === 'paid' ? ' <span class="iss ok" title="مسدد">✓ مسدد</span>' : pi.st === 'partial' ? ' <span class="iss warn">جزئي</span>' : pi.st === 'unpaid' && pi.late > 0 ? ' <span class="iss crit">متأخر</span>' : ''; })() : '') + '</td><td class="n neg">' + (res < 0 ? money(-res) : '') + '</td><td>' + pill(st) + (s.crit ? ' <span class="iss crit">' + int(s.crit) + ' ملاحظة</span>' : '') + '</td><td class="num">' + (r.sub && r.sub.formNo ? (r.sub.fileChunks ? '<a href="#" data-act="vat-dl-sub" data-id="' + r.id + '" title="تنزيل الإقرار المقدَّم PDF">' + esc(r.sub.formNo) + ' ⤓</a>' : '<a href="#vat-ret-match-' + r.id + '" title="لم يُحفظ ملف هذا الإقرار؛ اضغط لرفعه">' + esc(r.sub.formNo) + ' <span class="iss warn">ارفع الملف</span></a>') : '') + '</td><td class="num">' + esc(r.sub ? r.sub.sentDate || '' : '') + '</td></tr>';
     }
     return h + '</tbody></table></div></div></div>';
   }
@@ -411,6 +680,7 @@
       '<div class="tile ' + (calc.res > 0 ? 'c2' : 'c3') + '"><span>' + (calc.res > 0 ? 'مستحق السداد' : 'رصيد دائن يُرحَّل') + '</span><b>' + money(Math.abs(calc.res)) + '</b><small>' + esc(A.cur()) + '</small></div></div>';
     if (A.writable()) h += '<div class="toolbar"><label class="inl">الرصيد الدائن السابق <input type="number" step="0.01" min="0" id="vat-prev" value="' + esc(calc.prev) + '" style="width:140px"></label>' +
       (prevAuto ? '<span class="hint">' + (p ? 'يتغير تلقائيًا مع الإقرار السابق، وإذا أدخلت رقمًا هنا يُثبَّت.' : 'لا يوجد إقرار سابق مسجل؛ أدخل الرصيد الافتتاحي.') + '</span>' : '<button type="button" class="btn sm" data-act="vat-prev-auto" data-id="' + r.id + '">إعادته إلى الحساب التلقائي</button>') + '</div>';
+    h += payCard(r);
     h += form10(calc);
     const k = calc.counts;
     h += '<section class="card"><header><h2>المستندات</h2></header><div class="body"><div class="kv">' +
@@ -930,7 +1200,7 @@
   }
 
   /* ---------------- reports ---------------- */
-  const REPS = [['months', 'ملخص الإقرارات بالشهور'], ['summary', 'جميع الإقرارات'], ['credit', 'الأرصدة الدائنة والمستحق'], ['books', 'دفتر المبيعات والمشتريات']];
+  const REPS = [['months', 'ملخص الإقرارات بالشهور'], ['summary', 'جميع الإقرارات'], ['due', 'الضريبة المستحقة السداد'], ['credit', 'الأرصدة الدائنة والمستحق'], ['books', 'دفتر المبيعات والمشتريات']];
   /* the return used for a client and period: the latest amended one when it exists */
   function retFor(cid, period) {
     return rets().filter(r => r.client === cid && r.period === period).sort((a, b) => (a.kind === 'amended' ? -1 : 1) - (b.kind === 'amended' ? -1 : 1) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || null;
@@ -939,6 +1209,8 @@
   const SHORT = { draft: 'مسودة', ready: 'جاهز', submitted: 'مقدَّم', matched: '✓ مطابق', diff: '✗ فروق' };
   function repData(key) {
     const col = A.col;
+    if (key === 'due') return dueRep();
+    if (key === 'stmt') return stmtRep();
     if (key === 'months') {
       const y = ui.rmYear || String(new Date().getFullYear());
       if (!ui.rmClient) {
@@ -1022,6 +1294,7 @@
       const ys = Array.from(new Set(years.concat([String(new Date().getFullYear())]))).sort().reverse();
       f = '<select data-ui="rmClient">' + options(A.clientOptions(true), ui.rmClient, 'جميع الشركات (الحالة الشهرية)') + '</select><select data-ui="rmYear">' + options(ys, ui.rmYear) + '</select>';
     }
+    if (key === 'due') f = '<select data-ui="duClient">' + options(A.clientOptions(true), ui.duClient, 'جميع الشركات') + '</select><select data-ui="duAge">' + options([['late', 'المتأخر فقط']].concat(AGE), ui.duAge, 'كل الأعمار') + '</select>';
     if (key === 'summary') f = '<select data-ui="rsYear">' + options(years, ui.rsYear, 'جميع السنوات') + '</select><select data-ui="rbClient">' + options(A.clientOptions(true), ui.rbClient, 'جميع الشركات') + '</select>';
     if (key === 'books') f = '<select data-ui="rbClient">' + options(A.clientOptions(true), ui.rbClient, 'اختر الشركة…') + '</select><select data-ui="rbSide">' + options([['S', 'دفتر المبيعات'], ['P', 'دفتر المشتريات والمصروفات']], ui.rbSide) + '</select>' +
       '<label class="inl">من <input type="date" data-ui="rbFrom" value="' + esc(ui.rbFrom) + '"></label><label class="inl">إلى <input type="date" data-ui="rbTo" value="' + esc(ui.rbTo) + '"></label>';
@@ -1067,6 +1340,13 @@
       case 'vat-new': return A.writable() ? openNew({ client: el.dataset.client, period: el.dataset.period }) : null;
       case 'vat-pick': ui.vClient = el.dataset.client; return A.go('vat-list');
       case 'vat-dash-clear': ui.dClient = ''; ui.dStaff = ''; return A.renderPage();
+      case 'vat-pay': return openPay(el.dataset.id);
+      case 'vat-pay-del': return delPay(el.dataset.id, el.dataset.pid);
+      case 'vat-pay-bulk': return openBulkPay();
+      case 'vat-pay-cfg': return openPayCfg();
+      case 'vat-pay-remind': return openRemind(el.dataset.client);
+      case 'vat-due-age': ui.duAge = ui.duAge === el.dataset.v ? '' : el.dataset.v; return location.hash.startsWith('#vat-due') ? A.renderPage() : A.go('vat-due');
+      case 'vat-due-clear': ui.duClient = ''; ui.duStaff = ''; ui.duAge = ''; return A.renderPage();
       case 'vat-bulk': return r ? bulk(r, el.dataset.op) : null;
       case 'vat-list-status': ui.vStatus = el.dataset.v; return A.go('vat-list');
       case 'vat-book': ui.rbSide = el.dataset.v; return A.go('vat-rep-books');
@@ -1110,6 +1390,7 @@
       { label: 'مقدَّمة ومطابقة', nav: 1, act: 'vat-list-status', data: { v: 'matched' } }, { label: 'مقدَّمة وبها فروق', nav: 1, act: 'vat-list-status', data: { v: 'diff' } }, A('+ إقرار جديد', 'vat-new')];
     if (k === 'vat-rep') return REPS.map(([r, l]) => L(l, '#vat-rep-' + r)).concat([{ label: 'دفتر المبيعات', nav: 1, act: 'vat-book', data: { v: 'S' } }, { label: 'دفتر المشتريات والمصروفات', nav: 1, act: 'vat-book', data: { v: 'P' } }]).filter(x => x.href !== '#vat-rep-books');
     if (k === 'vat-parties') return [L('الموردون والعملاء', '#vat-parties')];
+    if (k === 'vat-due') return [L('كل المستحقات', '#vat-due'), { label: 'المتأخر السداد فقط', nav: 1, act: 'vat-due-age', data: { v: 'late' } }, L('تقرير الضريبة المستحقة', '#vat-rep-due'), A('⚙ إعدادات المتابعة', 'vat-pay-cfg')];
     return null;
   }
   function crumbs(sub) {
@@ -1118,11 +1399,13 @@
     if (p.view === 'list') return [['إقرارات القيمة المضافة', '#vat-list']];
     if (p.view === 'rep') return [['تقارير الإقرارات', '#vat-rep'], [(REPS.find(x => x[0] === p.key) || REPS[0])[1], '']];
     if (p.view === 'parties') return [['الموردون والعملاء', '']];
+    if (p.view === 'due') return [['الضريبة المستحقة السداد', p.client ? '#vat-due' : '']].concat(p.client ? [['كشف حساب ' + A.clientName(p.client), '']] : []);
     const r = retById(p.id);
     return [['إقرارات القيمة المضافة', '#vat-list']].concat(r ? [[A.clientName(r.client) + ' – ' + periodLabel(r), '#vat-ret-sum-' + r.id], [(TABS.find(t => t[0] === p.tab) || TABS[0])[1], '']] : []);
   }
   function homeStats() {
-    if (!S.M) return { open: 0, diff: 0 }; const all = rets(); return { open: all.filter(r => !r.sub).length, diff: all.filter(r => statusOf(r) === 'diff').length }; }
+    if (!S.M) return { open: 0, diff: 0, due: 0, late: 0 }; const all = rets(), d = dueSummary();
+    return { open: all.filter(r => !r.sub).length, diff: all.filter(r => statusOf(r) === 'diff').length, due: d.total, late: d.nLate }; }
 
   document.addEventListener('keydown', (ev) => {
     if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== 'z' || ev.shiftKey) return;
@@ -1130,5 +1413,5 @@
     const r = cur(); if (!r || !A.writable()) return;
     ev.preventDefault(); undo(r.id);
   });
-  window.OFVat = { page, bind, act, allChunks, allFiles, homeStats, navMenu, crumbs, resetCache: () => { VS.cache.clear(); VS.undo.clear(); VS.sel.clear(); } };
+  window.OFVat = { page, bind, act, allChunks, allFiles, homeStats, navMenu, crumbs, dueSummary, payInfo, resetCache: () => { VS.cache.clear(); VS.undo.clear(); VS.sel.clear(); } };
 })();

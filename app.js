@@ -93,6 +93,7 @@
     backup: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/>',
     'vat-list': '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
     'vat-rep': '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    'vat-due': '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.2l3.2 2"/>',
     'vat-parties': '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c.6-3.4 3-5.4 6-5.4s5.4 2 6 5.4M15 11h6M15 15h6"/>',
     f41: '<path d="M6 3h9l4 4v14H6z"/><path d="M9 13h6M9 17h4"/>',
     apps: '<rect x="4" y="4" width="6" height="6" rx="1.2"/><rect x="14" y="4" width="6" height="6" rx="1.2"/><rect x="4" y="14" width="6" height="6" rx="1.2"/><rect x="14" y="14" width="6" height="6" rx="1.2"/>',
@@ -103,7 +104,7 @@
     { id: 'office', name: 'حسابات وإجراءات الشركات', desc: 'العملاء والأتعاب والتحصيل، الإجراءات والمواعيد، العقود والشهادات والتقارير', icon: 'clients', home: 'dashboard',
       nav: [['dashboard', 'لوحة التحكم'], ['clients', 'العملاء'], ['finance', 'الحركات المالية'], ['tasks', 'الإجراءات والمواعيد'], ['contracts', 'العقود والأتعاب'], ['certs', 'الشهادات'], ['feecalc', 'حاسبة رسوم التأسيس'], ['reports', 'التقارير'], ['backup', 'النسخ الاحتياطي'], ['setup', 'الإعدادات']] },
     { id: 'tax', name: 'الإقرارات الضريبية', desc: 'إقرارات القيمة المضافة: تحليل فواتير البيع والشراء، ملفات الرفع على المنظومة، ومطابقة الإقرار بعد تقديمه', icon: 'vat', home: 'vat',
-      nav: [['vat', 'لوحة الإقرارات'], ['vat-list', 'إقرارات القيمة المضافة'], ['clients', 'بيانات العملاء'], ['backup', 'النسخ الاحتياطي'], ['vat-rep', 'تقارير الإقرارات'], ['vat-parties', 'الموردون والعملاء'], ['f41', 'نموذج 41 (قريبًا)']] }
+      nav: [['vat', 'لوحة الإقرارات'], ['vat-due', 'مستحق السداد'], ['vat-list', 'إقرارات القيمة المضافة'], ['clients', 'بيانات العملاء'], ['backup', 'النسخ الاحتياطي'], ['vat-rep', 'تقارير الإقرارات'], ['vat-parties', 'الموردون والعملاء'], ['f41', 'نموذج 41 (قريبًا)']] }
   ];
   // on the office's own website (Cloudflare) every person signs in; the account page sits in both menus
   if (window.OF_CF) for (const m of MODULES) m.nav.push(['users', 'المستخدمون']);
@@ -257,14 +258,15 @@
   function renderNav() {
     const cp = currentPage(), page = cp.page; noteModule(page); const mod = moduleOf(page);
     const A = S.M && S.M.alerts;
-    const badge = { tasks: A ? A.overdue.length : 0 };
-    const on = (k) => page === 'vat' ? (k === 'vat-rep' ? /^rep/.test(cp.sub) : k === 'vat-parties' ? /^parties/.test(cp.sub) : k === 'vat-list' ? /^(list|ret)/.test(cp.sub) : k === 'vat' && !cp.sub) : (page === k || (page === 'client' && k === 'clients'));
+    const vd = page === 'vat' && window.OFVat && window.OFVat.dueSummary ? window.OFVat.dueSummary() : null;
+    const badge = { tasks: A ? A.overdue.length : 0, 'vat-due': vd ? vd.nLate : 0 }, badgeTip = { tasks: 'إجراءات متأخرة', 'vat-due': 'إقرارات متأخرة السداد' };
+    const on = (k) => page === 'vat' ? (k === 'vat-rep' ? /^rep/.test(cp.sub) : k === 'vat-due' ? /^due/.test(cp.sub) : k === 'vat-parties' ? /^parties/.test(cp.sub) : k === 'vat-list' ? /^(list|ret)/.test(cp.sub) : k === 'vat' && !cp.sub) : (page === k || (page === 'client' && k === 'clients'));
     const items = (mod ? mod.nav : MODULES.filter(modVisible).map(m => [modHome(m), m.name, m.icon])).filter(([k]) => navVisible(k));
     $('#nav').innerHTML = '<a href="#home" class="apps' + (page === 'home' ? ' on' : '') + '">' + svgIcon('apps') + '<span>' + (mod ? 'جميع الأقسام' : 'الأقسام') + '</span></a>' +
       (mod ? '<div class="nav-mod">' + esc(mod.name) + '</div>' : '') +
       items.map(([k, label, ic]) => k === 'f41' ? '<a class="soon" aria-disabled="true">' + svgIcon(k) + '<span>' + esc(label) + '</span></a>' :
         '<a href="#' + k + '" data-k="' + k + '" class="' + (mod && on(k) ? 'on' : '') + '">' + svgIcon(ic || k) + '<span>' + esc(label) + '</span>' +
-        (badge[k] ? '<span class="badge" title="إجراءات متأخرة">' + badge[k] + '</span>' : '') + '</a>').join('');
+        (badge[k] ? '<span class="badge" title="' + esc(badgeTip[k] || '') + '">' + badge[k] + '</span>' : '') + '</a>').join('');
     placeNavIndicator(); bindNavMenus();
     const build = (document.querySelector('meta[name=of-build]') || {}).content || '';
     $('#as-of').textContent = 'اليوم: ' + C.todayISO() + (build ? ' · الإصدار ' + build : '');
@@ -395,7 +397,7 @@
     const M = S.M, A = M.alerts;
     const vat = window.OFVat ? window.OFVat.homeStats() : null;
     const stat = { office: int(M.active.length) + ' عميل نشط' + (A.overdue.length ? ' · ' + int(A.overdue.length) + ' إجراء متأخر' : ''),
-      tax: vat ? int(vat.open) + ' إقرار تحت الإعداد' + (vat.diff ? ' · ' + int(vat.diff) + ' به فروق' : '') : '' };
+      tax: vat ? int(vat.open) + ' إقرار تحت الإعداد' + (vat.diff ? ' · ' + int(vat.diff) + ' به فروق' : '') + (vat.late ? ' · ' + int(vat.late) + ' متأخر السداد' : '') : '' };
     let h = topBar(settings().officeName || 'مكتب المحاسبة', 'اختر القسم') + '<div class="content"><div class="mods">';
     for (const [i, m] of MODULES.filter(modVisible).entries()) h += '<a class="mod" style="--i:' + i + '" href="#' + modHome(m) + '" data-act="open-mod" data-to="' + modHome(m) + '"><span class="mod-ic">' + svgIcon(m.icon) + '</span><b>' + esc(m.name) + '</b><small>' + esc(m.desc) + '</small><span class="mod-stat">' + esc(stat[m.id] || '') + '</span></a>';
     return h + '</div></div>';
@@ -417,6 +419,8 @@
       '<a class="tile c5" href="#tasks-overdue"><span>إجراءات متأخرة</span><b>' + int(A.overdue.length) + '</b><small>' + int(A.soon.length) + ' إجراء يستحق خلال ' + int(settings().alertDays || 7) + ' أيام</small></a>' +
       '</div>';
     const al = [];
+    const vd = window.OFVat && window.OFVat.dueSummary && level('vat') !== 'none' ? window.OFVat.dueSummary() : null;
+    if (vd && vd.nLate) al.push(['crit', vd.nLate, 'إقرارات عليها ضريبة متأخرة السداد', money(vd.lateTotal) + ' ' + cur() + ' · اضغط للمتابعة', '#vat-due']);
     if (A.overdue.length) al.push(['crit', A.overdue.length, 'إجراءات تجاوزت موعدها', 'إقرارات ومهام لم تُنجز حتى الآن', '#tasks-overdue']);
     if (A.docsExpired.length) al.push(['crit', A.docsExpired.length, 'مستندات منتهية', 'سجل تجاري أو بطاقة ضريبية أو غيرها', '#reports-docs']);
     if (A.late90.length) al.push(['crit', A.late90.length, 'عملاء عليهم مستحقات أكثر من 90 يومًا', 'راجع أعمار الديون', '#reports-balances']);
@@ -428,6 +432,16 @@
       const attr = a[4].startsWith('act:') ? ' data-act="' + a[4].slice(4) + '" role="button" tabindex="0"' : ' href="' + a[4] + '"';
       return '<a class="alert ' + a[0] + '"' + attr + '><b>' + int(a[1]) + '</b><div><strong>' + esc(a[2]) + '</strong><small>' + esc(a[3]) + '</small></div></a>';
     }).join('') : '<div class="alert ok"><b>✓</b><div><strong>لا توجد ملاحظات</strong><small>كل الإجراءات والمستندات في مواعيدها</small></div></div>') + '</div></section>';
+
+    // tax due for payment: the office's first concern
+    if (vd && vd.n) {
+      const canPay = !!S.db && S.canWrite !== false && level('vat') === 'edit';
+      h += '<section class="card due-card"><header><h2>ضريبة القيمة المضافة المستحقة السداد</h2><span class="hint">' + money(vd.total) + ' ' + esc(cur()) + ' · ' + int(vd.n) + ' إقرار · ' + int(vd.clients) + ' شركة</span><span class="grow"></span><a class="btn sm" href="#vat-due">كل المستحقات</a></header><div class="tablewrap"><table><thead><tr><th>الشركة</th><th>الفترة</th><th>آخر موعد</th><th>التأخير</th><th class="n">المتبقي</th><th></th></tr></thead><tbody>' +
+        vd.rows.slice(0, 6).map(x => '<tr><td><a href="#vat-due-' + x.c.id + '">' + esc(x.c.name) + '</a></td><td><a href="#vat-ret-sum-' + x.r.id + '">' + esc(x.r.freq === 'quarterly' ? 'الربع المنتهي ' + monthLabel(x.r.period) : monthLabel(x.r.period)) + '</a></td><td class="num">' + esc(x.due) + '</td>' +
+          '<td><span class="iss ' + (x.late > 60 ? 'crit' : x.late > 0 ? 'warn' : 'info') + '">' + (x.late > 0 ? 'متأخر ' + int(x.late) + ' يوم' : x.toGo === 0 ? 'اليوم' : 'متبقٍّ ' + int(x.toGo) + ' يوم') + '</span></td><td class="n"><b>' + money(x.left) + '</b></td>' +
+          '<td class="acts">' + (canPay ? '<button type="button" class="btn sm" data-act="vat-pay" data-id="' + x.r.id + '">تسجيل سداد</button>' : '') + '</td></tr>').join('') +
+        '</tbody></table></div>' + (vd.n > 6 ? '<div class="hint" style="padding:8px 16px"><a href="#vat-due">و' + int(vd.n - 6) + ' إقرار آخر…</a></div>' : '') + '</section>';
+    }
 
     // top balances + trend
     const top = M.clients.map(c => [c, M.acct.get(c.id).balance]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, 8);
@@ -2475,7 +2489,7 @@
 
   /* ---------------- shared with modules (vat.js) ---------------- */
   window.OFApp = { S, C, $, $$, esc, uid, money, moneyC, int, cur, monthLabel, clean, clientName, settings, options, clientOptions, topBar, actBtn, modal, closeModal, toast, write,
-    confirmBox, fld, inp, val, writable, go, renderPage, scheduleRender, makePdf, pdfHead, tableHtml, xlsxBook, saveFile, fileName, col, lawOf, MONTHS, TAX_LAW, svgIcon };
+    confirmBox, fld, inp, val, writable, go, renderPage, scheduleRender, makePdf, pdfHead, tableHtml, xlsxBook, saveFile, fileName, col, lawOf, MONTHS, TAX_LAW, svgIcon, level, saveSettings };
 
   /* ---------------- boot ---------------- */
   renderShell();
