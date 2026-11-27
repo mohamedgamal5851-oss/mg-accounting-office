@@ -546,7 +546,7 @@
       '</div><header style="border-top:1px solid var(--line)"><h2>المستندات الرسمية</h2></header><div class="tablewrap"><table><thead><tr><th>المستند</th><th>الرقم</th><th>تاريخ الانتهاء</th><th>الحالة</th></tr></thead><tbody>' +
       ((c.docs || []).length ? c.docs.map(d => { const s = docState(d); return '<tr><td>' + esc(d.name) + '</td><td class="num">' + esc(d.number || '') + '</td><td class="num">' + esc(d.expiry || '—') + '</td><td>' + s + '</td></tr>'; }).join('') : '<tr><td colspan="4" class="empty">لا توجد مستندات مسجلة</td></tr>') +
       '</tbody></table></div></section></div>';
-    if (writable() && (!window.OF_CF || S.isOwner)) h += '<div class="toolbar"><span class="grow"></span><button type="button" class="btn danger" data-act="del-client" data-id="' + c.id + '">حذف العميل</button></div>';
+    if (writable() && (!window.OF_CF || S.isOwner)) h += '<div class="toolbar"><span class="grow"></span><button type="button" class="btn" data-act="merge-client" data-id="' + c.id + '">دمج مع عميل آخر</button><button type="button" class="btn danger" data-act="del-client" data-id="' + c.id + '">حذف العميل</button></div>';
     return h;
   }
   function docState(d) {
@@ -787,6 +787,59 @@
     const used = M.txs.some(t => t.client === id) || M.tasks.some(t => t.client === id) || M.contracts.some(k => k.client === id);
     if (used) return modal('لا يمكن حذف العميل', '<p style="margin:0">هذا العميل مرتبط بحركات مالية أو إجراءات أو عقود. اجعل حالته «متوقف» بدلًا من الحذف حتى يبقى سجله محفوظًا.</p>', '<button type="button" class="btn primary" data-close>حسنًا</button>');
     confirmBox('حذف العميل', 'هل تريد حذف «' + c.name + '» نهائيًا؟', 'حذف', async () => { if (await write(() => S.db.doc('clients/' + id).delete())) { closeModal(); toast('تم الحذف'); go('clients'); } });
+  }
+
+  /* merge a duplicate client into the right one: its transactions, tasks, contracts, certificates, returns and
+     per-client settings move to the kept client, empty fields of the kept client are filled from it, then it is deleted */
+  const MERGE_COLS = [['transactions', 'حركة مالية'], ['tasks', 'إجراء'], ['contracts', 'عقد'], ['certificates', 'شهادة'], ['vatReturns', 'إقرار']];
+  function mergeClient(id) {
+    const c = S.M.clientById.get(id); if (!c) return;
+    const counts = MERGE_COLS.map(([col, nm]) => [nm, (S.raw[col] || []).filter(x => x.client === id).length]).filter(([, n]) => n);
+    const body = '<form id="mg-form" class="form"><div class="field full"><p style="margin:0">سيُنقل كل ما يخص «<b>' + esc(c.name) + '</b>» إلى العميل الذي تختاره، ثم يُحذف «' + esc(c.name) + '». ' +
+      'الخانات الفارغة في بيانات العميل المختار تُكمَّل من بيانات هذا العميل، ولا يُكتب فوق أي خانة فيها بيانات.</p>' +
+      '<p class="hint" style="margin:6px 0 0">سيُنقل: ' + (counts.length ? counts.map(([nm, n]) => int(n) + ' ' + nm).join(' · ') : 'لا توجد حركات أو إجراءات أو عقود، البيانات الأساسية فقط') + '</p></div>' +
+      fld('mg-to', 'دمج في العميل', '<select id="mg-to" required>' + options(clientOptions(true).filter(([k]) => k !== id), '', 'اختر العميل الصحيح…') + '</select>', true) + '</form>';
+    const bg = modal('دمج عميل مكرر', body, '<button type="button" class="btn" data-close>إلغاء</button><button type="submit" form="mg-form" class="btn primary">دمج وحذف المكرر</button>');
+    $('#mg-form', bg).addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const to = $('#mg-to', bg).value, dst = S.raw.clients.find(x => x.id === to); if (!dst) return;
+      const btn = $('button[type=submit]', bg.closest('.modal')) || {}; btn.disabled = true;
+      const notes = [];
+      const ok = await write(async () => {
+        for (const [col] of MERGE_COLS) for (const x of (S.raw[col] || []).filter(r => r.client === id)) await S.db.doc(col + '/' + x.id).update({ client: to });
+        // per-client tax settings (supplier and customer details): keep the right client's, add what only the duplicate had
+        const pSrc = (S.raw.vatParties || []).find(p => p.id === id);
+        if (pSrc) {
+          const pDst = (S.raw.vatParties || []).find(p => p.id === to);
+          const map = Object.assign({}, pSrc.map || {}, (pDst && pDst.map) || {});
+          await S.db.doc('vatParties/' + to).set(clean(Object.assign({}, pSrc, pDst || {}, { id: to, client: to, map, defAddr: (pDst && pDst.defAddr) || pSrc.defAddr || '' })));
+          await S.db.doc('vatParties/' + id).delete();
+        }
+        // logins to the clients' government portals: moved only when the right client has none, never overwritten
+        try {
+          const cs = await S.db.doc('credentials/' + id).get();
+          if (cs.exists) {
+            const cd = await S.db.doc('credentials/' + to).get();
+            if (!cd.exists) { await S.db.doc('credentials/' + to).set(clean(cs.data())); await S.db.doc('credentials/' + id).delete(); }
+            else notes.push('بيانات المنظومات: أُبقي على بيانات العميل المختار، وبيانات المكرر محفوظة كما هي ولم تُحذف.');
+          }
+        } catch (e) { /* no access to portal logins: leave them */ }
+        const fill = {};
+        for (const [k, v] of Object.entries(clean(S.raw.clients.find(x => x.id === id) || {}))) {
+          if (k === 'id' || v == null || v === '' || (Array.isArray(v) && !v.length)) continue;
+          const cur = dst[k];
+          if (cur == null || cur === '' || (Array.isArray(cur) && !cur.length)) fill[k] = v;
+        }
+        if (Object.keys(fill).length) await S.db.doc('clients/' + to).update(fill);
+        await S.db.doc('clients/' + id).delete();
+      });
+      if (!ok) { btn.disabled = false; return; }
+      closeModal();
+      const dup = (S.raw.vatReturns || []).filter(r => r.client === to).map(r => r.period).filter((p, i, a) => p && a.indexOf(p) !== i);
+      if (dup.length) notes.push('يوجد الآن أكثر من إقرار لنفس الفترة (' + [...new Set(dup)].join('، ') + ')، راجعها واحذف المكرر.');
+      toast('تم دمج «' + c.name + '» في «' + dst.name + '»' + (notes.length ? '. ' + notes.join(' ') : ''));
+      go('client-info-' + to);
+    });
   }
 
   /* ---------------- transaction form ---------------- */
@@ -2370,6 +2423,7 @@
         case 'add-client': return openClientForm(null);
         case 'edit-client': return openClientForm(S.raw.clients.find(c => c.id === id));
         case 'del-client': return deleteClient(id);
+        case 'merge-client': return mergeClient(id);
         case 'user-edit': return openUserEdit(id);
         case 'user-del': return confirmBox('حذف المستخدم', 'سيُحذف حساب «' + id + '» ولن يستطيع الدخول. البيانات التي أدخلها تبقى كما هي.', 'حذف', async () => { try { await window.OF_CF.deleteUser(id); toast('تم الحذف'); U.list = null; loadUsers(); } catch (e) { toast(e.message, true); } });
         case 'my-pass': return openMyPass();
