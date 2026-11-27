@@ -1224,7 +1224,7 @@
   function tableHtml(rep) {
     const ge = groupEnds(rep), gx = (i) => ge.has(i) ? 'ge' : '';
     // groups: an optional header row above the columns, [label, number of columns] (an empty label leaves the cells blank)
-    const grp = rep.groups ? '<tr class="grp">' + rep.groups.map(([l, n], k) => '<th colspan="' + n + '"' + cls(l ? 'g' : '', k < rep.groups.length - 1 ? 'ge' : '') + '>' + esc(l) + '</th>').join('') + '</tr>' : '';
+    const grp = rep.groups ? '<tr class="grp">' + rep.groups.map(([l, n, c], k) => '<th colspan="' + n + '"' + cls(l ? 'g' : '', l ? 'gc-' + (c || 'navy') : '', k < rep.groups.length - 1 ? 'ge' : '') + '>' + esc(l) + '</th>').join('') + '</tr>' : '';
     const tc = [rep.groups ? 'grouped' : '', rep.tcls || ''].filter(Boolean).join(' ');
     return '<table' + (tc ? ' class="' + tc + '"' : '') + '><thead>' + grp + '<tr>' + rep.cols.map((c, i) => '<th' + cls(c.n ? 'n' : '', gx(i)) + '>' + esc(c.h) + '</th>').join('') + '</tr></thead><tbody>' +
       (rep.rows.length ? rep.rows.map(r => '<tr' + (r.cls ? ' class="' + r.cls + '"' : '') + '>' + (r.cls ? spanRow(r, rep.cols, ge) : r.map((v, i) => rep.cols[i].fmt ? '<td' + cls('ed', gx(i)) + '>' + rep.cols[i].fmt(v, r) + '</td>' : cellHtml(v, rep.cols[i], gx(i))).join('')) + '</tr>').join('') : '<tr><td colspan="' + rep.cols.length + '" class="empty none">لا توجد بيانات</td></tr>') + '</tbody>' +
@@ -1242,7 +1242,7 @@
     if (idx.length === rep.cols.length) return rep;
     const pick = (r) => { if (!r) return r; const o = idx.map(i => r[i]); for (const k of ['cls', 'rid', 'auto', 'ref', 'ro']) if (r[k] !== undefined) o[k] = r[k]; return o; };
     let groups = null;
-    if (rep.groups) { groups = []; let i = 0; for (const [l, n] of rep.groups) { const m = idx.filter(j => j >= i && j < i + n).length; if (m) groups.push([l, m]); i += n; } }
+    if (rep.groups) { groups = []; let i = 0; for (const [l, n, c] of rep.groups) { const m = idx.filter(j => j >= i && j < i + n).length; if (m) groups.push([l, m, c]); i += n; } }
     return Object.assign({}, rep, { cols: idx.map(i => rep.cols[i]), rows: rep.rows.map(pick), foot: pick(rep.foot), groups });
   }
 
@@ -1548,8 +1548,10 @@
       return { xf, xml };
     }
     // the cell borders: thin lines, a heavier line after the last column of each group (and over the total row)
-    const thin = ['thin', K.line], groupLine = ['medium', K.navy];
-    const bd = (end, top) => ({ left: thin, right: end ? groupLine : thin, top: top || thin, bottom: thin });
+    const thin = ['thin', K.line];
+    const bd = (end, top) => ({ left: thin, right: thin, top: top || thin, bottom: thin });
+    // group colours: [band, light fill]
+    const GC = { blue: ['378ADD', 'E6F1FB'], green: ['639922', 'EAF3DE'], navy: ['13294B', 'E9EDF4'], amber: ['BA7517', 'FAEEDA'], gray: ['888780', 'F1EFE8'] };
     function sheet(sh, st, i) {
       const rep = sh.rep, cols = rep.cols, n = Math.max(1, cols.length), ge = groupEnds(rep), last = colName(n - 1);
       const rowsX = [], merges = [], widths = cols.map(c => Math.min(18, String(c.h || '').length + 2));
@@ -1571,10 +1573,10 @@
       const headTop = r + 1;
       if (rep.groups) {
         const cells = []; let ci = 0;
-        rep.groups.forEach(([l, k], gi) => {
-          const end = gi < rep.groups.length - 1;
+        rep.groups.forEach(([l, k, gc], gi) => {
+          const end = gi < rep.groups.length - 1, g = GC[gc] || GC.navy;
           for (let j = 0; j < k; j++) {
-            const s = l ? st.xf({ font: { b: 1, sz: 11, c: K.navy }, fill: K.grp, h: 'center', border: { left: thin, right: end && j === k - 1 ? groupLine : thin, top: thin, bottom: ['medium', K.gold] } }) : st.xf({ border: end && j === k - 1 ? { left: 0, right: groupLine, top: 0, bottom: 0 } : null });
+            const s = l ? st.xf({ font: { b: 1, sz: 11, c: K.ink }, fill: g[1], h: 'center', border: { left: j === 0 ? ['medium', 'FFFFFF'] : 0, right: end && j === k - 1 ? ['medium', 'FFFFFF'] : 0, top: ['thick', g[0]], bottom: 0 } }) : st.xf({});
             cells.push(cell(ci + j, j === 0 ? l : '', s, false, k > 1));
           }
           if (k > 1 && l) merges.push(colName(ci) + (r + 1) + ':' + colName(ci + k - 1) + (r + 1));

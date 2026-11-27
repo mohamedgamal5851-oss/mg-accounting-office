@@ -1792,7 +1792,8 @@
       [['paid', 'المسدد', 1, 1], ['left', 'الفرق', 1, 1], ['payDate', 'تاريخ السداد', 0, 0]],
       [['st', 'الحالة', 0, 0], ['no', 'رقم الإقرار', 0, 0], ['sent', 'تاريخ التقديم', 0, 0], ['att', 'المرفق', 0, 0]]);
     const cols = leadCols.concat(CL.map(([k, l, n]) => k === 'att' ? Object.assign(col(l), { id: k, noPdf: 1, noXlsx: 1, fmt: attCell }) : Object.assign(col(l, n), { id: k, sum: 0 })));
-    const groups = [['', leadCols.length], ['المبيعات', sK.length + 2 + (anyT ? 1 : 0)], ['المشتريات', pK.length + 2], ['نتيجة الإقرار', 4], ['السداد', 3], ['التقديم', 4]];
+    // each group has its colour: a band above its title, and a white gap between the groups
+    const groups = [['', leadCols.length], ['المبيعات', sK.length + 2 + (anyT ? 1 : 0), 'blue'], ['المشتريات', pK.length + 2, 'green'], ['نتيجة الإقرار', 4, 'navy'], ['السداد', 3, 'amber'], ['التقديم', 4, 'gray']];
     const L = leadCols.length, at = Object.fromEntries(CL.map(([k], i) => [k, L + i]));
     const rows = recs.map(x => {
       const row = x.lead.concat(new Array(CL.length).fill(''));
