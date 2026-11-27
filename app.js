@@ -379,6 +379,44 @@
 
   /* ---------------- dashboard ---------------- */
   function lastBackup() { try { return localStorage.getItem('of-last-backup') || ''; } catch (e) { return ''; } }
+  /* ---------------- storage used ----------------
+     the office website (Cloudflare): the database's size against the plan's limit, and what each part of the program takes;
+     this computer: what the browser keeps for the program */
+  const STG = { data: null, loading: false, err: '' };
+  const STG_NAMES = { vatDocs: 'فواتير المنظومة PDF', vatFiles: 'ملفات الإقرارات المقدَّمة PDF', vatInvoices: 'فواتير الإقرارات (من الشيتات)', vatReturns: 'الإقرارات', vatParties: 'تصنيفات الموردين والعملاء',
+    clients: 'العملاء', transactions: 'الحركات المالية', tasks: 'الإجراءات والمواعيد', contracts: 'العقود', certificates: 'الشهادات', credentials: 'بيانات المنظومات (مشفرة)', staff: 'الموظفون', meta: 'الإعدادات', vault: 'مفتاح الخزنة' };
+  const LIMIT_FREE = 500 * 1024 * 1024;
+  const fmtBytes = (b) => b == null ? '—' : b >= 1024 * 1024 * 1024 ? (b / 1024 / 1024 / 1024).toFixed(2) + ' جيجا' : b >= 1024 * 1024 ? String(Math.round(b / 1024 / 1024 * 10) / 10) + ' ميجا' : Math.max(1, Math.round(b / 1024)) + ' كيلو';
+  async function loadStorage() {
+    STG.loading = true; STG.err = '';
+    try {
+      if (window.OF_CF && window.OF_CF.stats) STG.data = Object.assign({ kind: 'cf' }, await window.OF_CF.stats());
+      else if (navigator.storage && navigator.storage.estimate) { const e = await navigator.storage.estimate(); STG.data = { kind: 'local', usage: e.usage, quota: e.quota, at: Date.now() }; }
+      else STG.data = { kind: 'none' };
+    } catch (e) { STG.err = (e && e.message) || 'تعذّر حساب المساحة.'; }
+    STG.loading = false; scheduleRender();
+  }
+  function storageCard() {
+    if (!(window.OF_CF ? S.isOwner : window.OF_LOCAL)) return '';
+    if (!STG.data && !STG.loading && !STG.err) setTimeout(loadStorage, 0);
+    let h = '<section class="card stg"><header><h2>مساحة التخزين</h2><span class="hint">' + (window.OF_CF ? 'قاعدة بيانات المكتب على Cloudflare' : 'متصفح هذا الجهاز') + '</span><span class="grow"></span><button type="button" class="btn sm" data-act="stg-refresh"' + (STG.loading ? ' disabled' : '') + '>' + (STG.loading ? 'جارٍ الحساب…' : '↻ تحديث') + '</button></header><div class="body">';
+    if (STG.err) return h + '<div class="note warn">' + esc(STG.err) + '</div></div></section>';
+    const d = STG.data; if (!d) return h + '<div class="loading">جارٍ حساب المساحة…</div></div></section>';
+    const bar = (used, limit) => { const p = Math.min(100, used / limit * 100); return '<div class="stg-bar"><span style="width:' + p.toFixed(1) + '%" class="' + (p >= 85 ? 'crit' : p >= 60 ? 'warn' : '') + '"></span></div><div class="stg-nums"><b>' + fmtBytes(used) + '</b> مستخدمة من ' + fmtBytes(limit) + ' <span class="hint">(' + (p < 1 ? 'أقل من 1' : p.toFixed(0)) + '٪)</span></div>'; };
+    if (d.kind === 'local') return h + (d.usage != null && d.quota ? bar(d.usage, d.quota) + '<p class="hint" style="margin:8px 0 0">المساحة اللي المتصفح سايبها للبرنامج على الجهاز ده، والحد بيحدده المتصفح حسب المساحة الفاضية على الجهاز.</p>' : '<div class="hint">المتصفح ده مش بيوضح المساحة.</div>') + '</div></section>';
+    if (d.kind !== 'cf') return h + '<div class="hint">مش متاح هنا.</div></div></section>';
+    const cols = (d.cols || []).slice().sort((a, b) => (b.bytes || 0) - (a.bytes || 0)), sum = cols.reduce((a, c) => a + (c.bytes || 0), 0), size = d.size || sum;
+    const pdfs = cols.find(c => c.col === 'vatDocs'), avg = pdfs && pdfs.n ? pdfs.bytes / pdfs.n : 80 * 1024;
+    h += bar(size, LIMIT_FREE) +
+      '<p class="hint" style="margin:8px 0 12px">الحد 500 ميجا ده للخطة المجانية على Cloudflare؛ على الخطة المدفوعة (5 دولار في الشهر) الحد 10 جيجا. ' +
+      (size < LIMIT_FREE ? 'الباقي يكفي حوالي ' + int(Math.floor((LIMIT_FREE - size) / avg)) + ' فاتورة PDF كمان.' : 'المساحة خلصت: الحفظ ممكن يقف لحد ما تمسح ملفات أو تنقل للخطة المدفوعة.') + '</p>' +
+      '<div class="tablewrap"><table><thead><tr><th>الجزء</th><th class="n">عدد السجلات</th><th class="sz">المساحة</th><th class="n">النسبة</th></tr></thead><tbody>' +
+      cols.map(c => '<tr><td>' + esc(STG_NAMES[c.col] || c.col) + '</td><td class="n">' + int(c.n) + '</td><td class="sz">' + fmtBytes(c.bytes || 0) + '</td><td class="n">' + (sum ? ((c.bytes || 0) / sum * 100).toFixed(1) + '٪' : '') + '</td></tr>').join('') +
+      '</tbody><tfoot><tr><td>الإجمالي</td><td class="n">' + int(cols.reduce((a, c) => a + c.n, 0)) + '</td><td class="sz">' + fmtBytes(sum) + '</td><td></td></tr></tfoot></table></div>' +
+      (d.size && d.size > sum ? '<p class="hint" style="margin:8px 0 0">حجم قاعدة البيانات (' + fmtBytes(d.size) + ') أكبر شوية من مجموع الأجزاء، لأنه بيشمل الفهارس والمستخدمين والجلسات.</p>' : '') +
+      '<p class="hint" style="margin:6px 0 0">آخر حساب: ' + esc(new Date(d.at || Date.now()).toLocaleString('ar-EG')) + '</p>';
+    return h + '</div></section>';
+  }
   function pageBackup() {
     const local = !!window.OF_LOCAL, last = lastBackup();
     let h = topBar('النسخ الاحتياطي والاسترجاع', local ? 'هذه النسخة تعمل على هذا الجهاز' : window.OF_CF ? 'نسخة موقع المكتب على Cloudflare' : 'هذه النسخة منشورة على claude.ai') + '<div class="content">';
@@ -389,7 +427,7 @@
       (S.isOwner ? '<label class="btn" for="imp-backup2">⤒ استرجاع نسخة احتياطية</label><input type="file" id="imp-backup2" accept=".json,application/json" hidden>' : '') + '</div>' +
       '<p class="hint" style="margin:10px 0 0">' + (last ? 'آخر نسخة احتياطية نُزّلت من هذا المتصفح: ' + esc(last.replace('T', ' ').slice(0, 16)) : 'لم تُنزَّل نسخة احتياطية من هذا المتصفح بعد.') + '</p>' +
       (local ? '<div class="note" style="margin-top:12px">بيانات هذه النسخة محفوظة داخل متصفح هذا الجهاز فقط؛ مسح بيانات المتصفح يمسحها. احرص على تنزيل نسخة احتياطية بصفة دورية.</div>' : '') +
-      '</div></section></div>';
+      '</div></section>' + storageCard() + '</div>';
     return h;
   }
   function pageHome() {
@@ -2772,6 +2810,7 @@
         case 'xlsx-statement': return xlsxStatement(id, el.dataset.range === 'r');
         case 'client-template': return clientTemplate();
         case 'backup': return backup();
+        case 'stg-refresh': STG.data = null; return loadStorage();
         case 'add-cert': return openCertForm(null);
         case 'fc-pdf': return feePdf();
         case 'fc-xlsx': return feeXlsx();

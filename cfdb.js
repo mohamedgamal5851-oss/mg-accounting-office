@@ -179,7 +179,8 @@
     changePassword: (current, password) => api('password', { method: 'POST', body: { current, password } }),
     listUsers: () => api('users').then(r => r.users),
     saveUser: (u) => api('users', { method: 'POST', body: u }),
-    deleteUser: (username) => api('users?u=' + enc(username), { method: 'DELETE' })
+    deleteUser: (username) => api('users?u=' + enc(username), { method: 'DELETE' }),
+    stats: () => api('stats')
   };
   window.claude = { use: async (name) => { await ready; return name === 'db' ? db : name === 'downloads' ? downloads : name === 'user' ? user : null; } };
 })();

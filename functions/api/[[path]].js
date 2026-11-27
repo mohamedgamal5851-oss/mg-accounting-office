@@ -193,12 +193,22 @@ export async function onRequest(ctx) {
       }
     }
 
+    /* ---------- storage used: the database's size and the size of each collection (manager only) ---------- */
+    if (route === 'stats' && method === 'GET') {
+      if (!isAdmin) return fail('مساحة التخزين لمدير البرنامج فقط.', 403);
+      const r = await db.prepare('SELECT col, COUNT(*) AS n, SUM(LENGTH(CAST(data AS BLOB))) AS bytes FROM docs WHERE deleted = 0 GROUP BY col').all();
+      const d = await db.prepare('SELECT COUNT(*) AS n FROM docs WHERE deleted = 1').first();
+      const meta = r.meta || {};
+      return json({ cols: r.results, deleted: d ? d.n : 0, size: meta.size_after || meta.db_size || null, at: Date.now() });
+    }
+
     /* ---------- data ---------- */
     if (route === 'sync' && method === 'GET') {
       const since = Number(url.searchParams.get('since')) || 0;
+      const notHeavy = 'col NOT IN (' + HEAVY.map(() => '?').join(', ') + ')';
       const r = since
-        ? await db.prepare('SELECT path, col, data, deleted, updated FROM docs WHERE updated > ? AND col NOT IN (?, ?) ORDER BY updated').bind(since, HEAVY[0], HEAVY[1]).all()
-        : await db.prepare('SELECT path, col, data, deleted, updated FROM docs WHERE deleted = 0 AND col NOT IN (?, ?)').bind(HEAVY[0], HEAVY[1]).all();
+        ? await db.prepare('SELECT path, col, data, deleted, updated FROM docs WHERE updated > ? AND ' + notHeavy + ' ORDER BY updated').bind(since, ...HEAVY).all()
+        : await db.prepare('SELECT path, col, data, deleted, updated FROM docs WHERE deleted = 0 AND ' + notHeavy).bind(...HEAVY).all();
       const m = await db.prepare('SELECT MAX(updated) AS m FROM docs').first();
       return json({ now: (m && m.m) || 0, me: pubUser(me), docs: r.results.filter(x => canReadCol(me, x.col)).map(x => ({ p: x.path, d: x.deleted ? null : JSON.parse(x.data) })) });
     }
