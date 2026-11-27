@@ -18,7 +18,7 @@
   const dtLabel = (side, dt) => ((side === 'S' ? S_DT : P_DT).find(x => x[0] === dt) || [0, String(dt)])[1];
   const isConsumer = (inv) => inv.side === 'S' && (inv.dt === 5 || inv.dt === 7 || inv.dt === 8);
   const ui = S.ui;
-  Object.assign(ui, { dYear: String(new Date().getFullYear()), dClient: '', dStaff: '', vClient: '', vStatus: '', vYear: '', vQ: '', vF: '', vMode: 'group', vSame: '1', rbClient: '', rbSide: 'S', rbFrom: '', rbTo: '', rsYear: '', pClient: '', pQ: '', rmClient: '', rmYear: String(new Date().getFullYear()), duClient: '', duStaff: '', duAge: '', stmtClient: '' });
+  Object.assign(ui, { dYear: String(new Date().getFullYear()), dClient: '', dStaff: '', vClient: '', vStatus: '', vYear: '', vQ: '', vF: '', vMode: 'group', vSame: '1', rbClient: '', rbSide: 'S', rbYear: '', rbFrom: '', rbTo: '', rbColsOpen: '', rsYear: '', pClient: '', pQ: '', rmClient: '', rmYear: String(new Date().getFullYear()), duClient: '', duStaff: '', duAge: '', stmtClient: '' });
 
   /* ---------------- data helpers ---------------- */
   const rets = () => S.raw.vatReturns || [];
@@ -179,6 +179,7 @@
     if (r.view === 'parties') bindParties();
     if (r.view === 'due' && !r.client) bindDue();
     if (r.view === 'hist') bindHist();
+    if (r.view === 'rep' && r.key === 'books') bindBooks();
   }
 
   /* ---------------- dashboard ---------------- */
@@ -1682,7 +1683,7 @@
   }
 
   /* ---------------- reports ---------------- */
-  const REPS = [['months', 'ملخص الإقرارات بالشهور'], ['summary', 'جميع الإقرارات'], ['due', 'الضريبة المستحقة السداد'], ['credit', 'الأرصدة الدائنة والمستحق'], ['books', 'دفتر المبيعات والمشتريات']];
+  const REPS = [['months', 'ملخص الإقرارات بالشهور'], ['summary', 'جميع الإقرارات'], ['due', 'الضريبة المستحقة السداد'], ['credit', 'الأرصدة الدائنة والمستحق'], ['books', 'دفاتر المبيعات والمشتريات والمصروفات']];
   /* the return used for a client and period: the latest amended one when it exists */
   function retFor(cid, period) {
     return rets().filter(r => r.client === cid && r.period === period).sort((a, b) => (a.kind === 'amended' ? -1 : 1) - (b.kind === 'amended' ? -1 : 1) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || null;
@@ -1761,36 +1762,126 @@
       return { title: 'الأرصدة الدائنة والمستحق حسب آخر إقرار', ctx: int(rows.length) + ' شركة', cols: [col('الشركة'), col('آخر إقرار'), col('الحالة'), col('مستحق السداد', 1), col('رصيد دائن مرحّل', 1), col('إقرارات مقدمة'), col('بها فروق'), col('آخر تاريخ تقديم')], rows,
         foot: ['الإجمالي', '', '', rows.reduce((s, r) => s + (Number(r[3]) || 0), 0), rows.reduce((s, r) => s + (Number(r[4]) || 0), 0), '', '', ''] };
     }
-    if (key === 'books') {
-      const side = ui.rbSide === 'P' ? 'P' : 'S';
-      const cols = [col('التاريخ'), col('الإقرار'), col('نوع المستند'), col('الرقم'), col(side === 'S' ? 'العميل' : 'المورد'), col('التسجيل / القومي'), col(side === 'S' ? 'التصنيف' : 'نوع السلعة')]
-        .concat(side === 'P' ? [col('الاستخدام'), col('التصنيف')] : []).concat([col('الصافي', 1), col('الضريبة', 1), col('الإجمالي', 1)]).concat(side === 'P' ? [col('خصم وإضافة', 1)] : []);
-      const out = { title: side === 'S' ? 'دفتر المبيعات' : 'دفتر المشتريات والمصروفات', ctx: (A.clientName(ui.rbClient) || '') + ' · ' + (ui.rbFrom || 'البداية') + ' ← ' + (ui.rbTo || 'اليوم'), cols, rows: [], landscape: true, pending: 0 };
-      if (!ui.rbClient) { out.needClient = true; return out; }
-      const list = rets().filter(r => r.client === ui.rbClient && (!ui.rbFrom || r.to >= ui.rbFrom) && (!ui.rbTo || r.from <= ui.rbTo)).sort((a, b) => a.period.localeCompare(b.period));
-      const t = [0, 0, 0, 0], byKind = new Map();
-      const addKind = (k, net, vat) => { const x = byKind.get(k) || [0, 0]; x[0] += net; x[1] += vat; byKind.set(k, x); };
-      for (const r of list) {
-        const e = VS.cache.get(r.id); if (!e || !e.loaded) { out.pending++; loadRet(r); continue; }
-        for (const inv of e.rows.filter(i => i.side === side && !i.x && (!ui.rbFrom || i.date >= ui.rbFrom) && (!ui.rbTo || i.date <= ui.rbTo)).sort((a, b) => a.date.localeCompare(b.date))) {
-          const sg = inv.dt === 3 ? -1 : 1, tt = V.invTotals(inv);
-          const cat = (ls) => Array.from(new Set(ls.map(l => BRL[V.lineKind(inv, l)]))).join(' + ');
-          for (const l of inv.lines) addKind(side === 'P' && l.e ? 'exp' : inv.dt === 2 ? 'adjP' : inv.dt === 3 ? 'adjM' : V.lineKind(inv, l), sg * (Number(l.net) || 0), sg * (Number(l.vat) || 0));
-          const kinds = side === 'S' ? cat(inv.lines) : Array.from(new Set(inv.lines.map(l => (P_O.find(x => x[0] === l.o) || ['', ''])[1]))).join(' + ');
-          const use = side === 'P' ? (inv.lines.every(l => l.e) ? 'مصروفات' : inv.lines.some(l => l.e) ? 'مختلط' : 'مشتريات') : null;
-          const row = [inv.date, periodLabel(r), dtLabel(side, inv.dt), inv.no, inv.name, isConsumer(inv) ? inv.nid || '' : inv.reg || '', kinds].concat(side === 'P' ? [use, cat(inv.lines.filter(l => !l.e)) || '—'] : []).concat([sg * tt.net, sg * tt.vat, sg * tt.total]).concat(side === 'P' ? [Number(inv.wht) || ''] : []);
-          out.rows.push(row); t[0] += sg * tt.net; t[1] += sg * tt.vat; t[2] += sg * tt.total; t[3] += Number(inv.wht) || 0;
-        }
-      }
-      out.foot = ['الإجمالي', '', '', '', '', '', ''].concat(side === 'P' ? ['', ''] : []).concat([t[0], t[1], t[2]]).concat(side === 'P' ? [t[3]] : []);
-      const kinds = (side === 'S' ? V.BR_S : V.BR_P).concat([['adjP', 'تسويات (+) إشعارات إضافة'], ['adjM', 'تسويات (−) إشعارات خصم']], side === 'P' ? [['exp', 'مصروفات (خارج الإقرار)']] : []).filter(([k]) => byKind.has(k));
-      out.extra = { title: 'الإجمالي حسب التصنيف', cols: [col('التصنيف'), col('الصافي', 1), col('الضريبة', 1), col('الإجمالي', 1)],
-        rows: kinds.map(([k, l]) => { const x = byKind.get(k); return [l, V.r2(x[0]), V.r2(x[1]), V.r2(x[0] + x[1])]; }), foot: ['الإجمالي', V.r2(t[0]), V.r2(t[1]), V.r2(t[2])] };
-      return out;
-    }
+    if (key === 'books') return booksData();
     const list = rets().filter(r => (!ui.rsYear || r.period.startsWith(ui.rsYear)) && (!ui.rbClient || r.client === ui.rbClient)).sort((a, b) => a.period.localeCompare(b.period) || A.clientName(a.client).localeCompare(A.clientName(b.client), 'ar'));
     const b = brReport([col('الشركة'), col('الفترة')], list.map(r => ({ lead: [A.clientName(r.client), periodLabel(r) + (r.kind === 'amended' ? ' (معدل)' : '')], r })));
     return Object.assign(b, { title: 'ملخص إقرارات القيمة المضافة', ctx: (ui.rsYear || 'جميع السنوات') + (ui.rbClient ? ' · ' + A.clientName(ui.rbClient) : ''), landscape: true });
+  }
+  /* ---------------- books: sales, purchases (without expenses) and expenses ----------------
+     a year (all returns of that year) or a date range; each month closes with a total row.
+     the classification is split into amount columns; the user hides or shows any column. */
+  const BOOKS = [['S', 'دفتر المبيعات'], ['P', 'دفتر المشتريات'], ['E', 'دفتر المصروفات']];
+  const ET_DEF = ['إيجار', 'كهرباء ومياه وغاز', 'تليفون وإنترنت', 'صيانة وإصلاحات', 'أدوات كتابية ومطبوعات', 'نقل وانتقالات', 'وقود وزيوت', 'ضيافة', 'أتعاب مهنية واستشارات', 'دعاية وإعلان', 'رسوم واشتراكات', 'نظافة', 'مصروفات بنكية', 'أخرى'];
+  let rbHide = null;
+  function rbHidden() { if (!rbHide) { try { rbHide = JSON.parse(localStorage.getItem('of-rb-cols') || '{}') || {}; } catch (e) { rbHide = {}; } } return rbHide; }
+  function rbSave() { try { localStorage.setItem('of-rb-cols', JSON.stringify(rbHide || {})); } catch (e) {} }
+  const bookSide = () => ['S', 'P', 'E'].includes(ui.rbSide) ? ui.rbSide : 'S';
+  const bookYears = (cid) => Array.from(new Set(rets().filter(r => r.client === cid).map(r => r.period.slice(0, 4)))).sort().reverse();
+  function bookYear(cid) { const ys = bookYears(cid); return ys.includes(ui.rbYear) ? ui.rbYear : ys[0] || String(new Date().getFullYear()); }
+  const partyKey = (inv) => inv.side + ':' + (inv.reg || inv.name);
+  /* the expense type of an invoice: its own, else the one kept for its supplier */
+  function expType(inv, mem) { if (inv.et) return { v: inv.et, auto: false }; const m = mem[partyKey(inv)]; return { v: (m && m.et) || '', auto: !!(m && m.et) }; }
+  function booksData() {
+    const side = bookSide(), cid = ui.rbClient, range = ui.rbYear === 'range';
+    const C = (id, h, n, auto) => ({ id, h, n: n ? 1 : 0, auto: auto ? 1 : 0, wrap: ['name', 'desc', 'kind'].includes(id) ? 1 : 0 });
+    const cols = [C('date', 'التاريخ'), C('ret', 'الإقرار'), C('dt', 'نوع المستند'), C('no', 'الرقم'), C('name', side === 'S' ? 'العميل' : 'المورد'), C('reg', side === 'S' ? 'التسجيل / القومي' : 'رقم التسجيل')]
+      .concat(side === 'S' ? V.BR_S.map(([k, l]) => C(k, l, 1, 1)).concat([C('adjP', 'إشعارات إضافة (+)', 1, 1), C('adjM', 'إشعارات خصم (−)', 1, 1), C('net', 'الصافي', 1), C('tbl', 'ضريبة الجدول', 1, 1), C('vat', 'الضريبة', 1), C('total', 'الإجمالي', 1)])
+        : side === 'P' ? [C('kind', 'نوع السلعة')].concat(V.BR_P.map(([k, l]) => C(k, l, 1, 1)), [C('adjP', 'إشعارات إضافة (+)', 1, 1), C('adjM', 'إشعارات خصم (−)', 1, 1), C('net', 'الصافي', 1), C('vat', 'الضريبة', 1), C('total', 'الإجمالي', 1), C('wht', 'خصم وإضافة', 1, 1)])
+        : [C('desc', 'البيان'), C('et', 'نوع المصروف'), C('net', 'الصافي', 1), C('vat', 'الضريبة', 1), C('total', 'الإجمالي', 1), C('wht', 'خصم وإضافة', 1, 1)]);
+    const idx = Object.fromEntries(cols.map((c, i) => [c.id, i]));
+    const yr = cid ? bookYear(cid) : '';
+    const out = { title: (BOOKS.find(b => b[0] === side) || BOOKS[0])[1], ctx: (A.clientName(cid) || '') + ' · ' + (range ? (ui.rbFrom || 'البداية') + ' ← ' + (ui.rbTo || 'اليوم') : 'سنة ' + yr), cols: [], rows: [], landscape: true, pending: 0, allCols: [], tcls: 'book' };
+    if (!cid) { out.needClient = true; return out; }
+    // one return per period (the amended one when it exists)
+    const periods = Array.from(new Set(rets().filter(r => r.client === cid && (range ? (!ui.rbFrom || r.to >= ui.rbFrom) && (!ui.rbTo || r.from <= ui.rbTo) : r.period.startsWith(yr))).map(r => r.period))).sort();
+    const list = periods.map(p => retFor(cid, p)).filter(Boolean);
+    const mem = partyDoc(cid).map || {}, items = [], types = new Set(ET_DEF);
+    for (const v of Object.values(mem)) if (v && v.et) types.add(v.et);
+    for (const r of list) {
+      const e = VS.cache.get(r.id); if (!e || !e.loaded) { out.pending++; loadRet(r); continue; }
+      e.rows.forEach((inv, ri) => {
+        if (inv.side !== (side === 'S' ? 'S' : 'P') || inv.x) return;
+        if (inv.et) types.add(inv.et);
+        if (range && ((ui.rbFrom && inv.date < ui.rbFrom) || (ui.rbTo && inv.date > ui.rbTo))) return;
+        const lines = side === 'S' ? inv.lines || [] : (inv.lines || []).filter(l => side === 'E' ? !!l.e : !l.e);
+        if (!lines.length) return;
+        const sg = inv.dt === 3 ? -1 : 1, note = inv.dt === 2 ? 'adjP' : inv.dt === 3 ? 'adjM' : '';
+        const row = new Array(cols.length).fill(''), add = (k, v) => { if (k in idx && v) row[idx[k]] = V.r2((Number(row[idx[k]]) || 0) + v); };
+        let net = 0, vat = 0;
+        for (const l of lines) { const n = sg * (Number(l.net) || 0); net += n; vat += sg * (Number(l.vat) || 0); if (side !== 'E') add(note || V.lineKind(inv, l), n); }
+        const lt = lines.reduce((a, l) => a + (Number(l.tbl) || 0), 0), tbl = side === 'S' ? sg * (lt || Number(inv.tbl) || 0) : 0;
+        Object.assign(row, { [idx.date]: inv.date, [idx.ret]: periodLabel(r) + (r.kind === 'amended' ? ' (معدل)' : ''), [idx.dt]: dtLabel(inv.side, inv.dt), [idx.no]: inv.no, [idx.name]: inv.name, [idx.reg]: isConsumer(inv) ? inv.nid || '' : inv.reg || '' });
+        add('net', net); add('tbl', tbl); add('vat', vat); add('total', net + tbl + vat);
+        if (side === 'P') { row[idx.kind] = Array.from(new Set(lines.map(l => (P_O.find(x => x[0] === l.o) || ['', ''])[1]).filter(Boolean))).join(' + '); if (Number(inv.wht)) row[idx.wht] = Number(inv.wht); }
+        if (side === 'E') {
+          const ds = lines.map(l => String(l.d || '').trim()).filter(Boolean);
+          row[idx.desc] = ds.length ? ds[0].slice(0, 60) + (ds.length > 1 ? ' (+' + (ds.length - 1) + ')' : '') : '';
+          const t = expType(inv, mem); row[idx.et] = t.v; row.auto = t.auto; row.ref = r.id + ':' + ri; row.ro = !A.writable();
+          if (Number(inv.wht) && (inv.lines || []).every(l => l.e)) row[idx.wht] = Number(inv.wht);
+        }
+        // the month the row closes with: its date, or the return's last month when the date is outside the return
+        const mk = inv.date && inv.date >= r.from && inv.date <= r.to ? inv.date.slice(0, 7) : r.to.slice(0, 7);
+        items.push({ mk, row, date: inv.date || '', no: String(inv.no || '') });
+      });
+    }
+    out.types = Array.from(types);
+    // which columns show: what the user chose, else every column (amount columns with nothing in them stay hidden)
+    const hid = rbHidden();
+    const vis = cols.map((c, i) => {
+      const empty = c.n ? !items.some(x => Number(x.row[i])) : false, key = side + ':' + c.id;
+      const hidden = key in hid ? !!hid[key] : !!(c.auto && empty);
+      out.allCols.push({ id: c.id, h: c.h, hidden, empty });
+      return !hidden;
+    });
+    if (!vis.some(Boolean)) vis[idx.date] = true;
+    const first = vis.indexOf(true), num = cols.map((c, i) => c.n ? i : -1).filter(i => i >= 0);
+    const sumRow = (rows, label) => { const t = new Array(cols.length).fill(''); t[first] = label; for (const i of num) { const v = V.r2(rows.reduce((a, x) => a + (Number(x[i]) || 0), 0)); t[i] = v || cols[i].auto ? v || '' : 0; } return t; };
+    items.sort((a, b) => a.mk.localeCompare(b.mk) || a.date.localeCompare(b.date) || a.no.localeCompare(b.no, undefined, { numeric: true }));
+    const months = Array.from(new Set(items.map(x => x.mk))), all = [];
+    for (const m of months) {
+      const rows = items.filter(x => x.mk === m).map(x => x.row);
+      all.push(...rows);
+      if (months.length > 1) { const t = sumRow(rows, 'إجمالي ' + A.monthLabel(m) + ' (' + int(rows.length) + ' مستند)'); t.cls = 'mtot'; all.push(t); }
+    }
+    const pick = (r) => { const o = r.filter((v, i) => vis[i]); for (const k of ['cls', 'auto', 'ref', 'ro']) if (r[k] !== undefined) o[k] = r[k]; return o; };
+    out.cols = cols.filter((c, i) => vis[i]).map(c => c.id === 'et' ? Object.assign({}, c, { fmt: etCell }) : c);
+    out.rows = all.map(pick);
+    out.foot = pick(sumRow(items.map(x => x.row), 'الإجمالي (' + int(items.length) + ' مستند)'));
+    if (side === 'E') {
+      const by = new Map();
+      for (const { row } of items) { const k = row[idx.et] || 'غير محدد', x = by.get(k) || [0, 0, 0]; x[0] += Number(row[idx.net]) || 0; x[1] += Number(row[idx.vat]) || 0; x[2]++; by.set(k, x); }
+      const ks = Array.from(by.keys()).sort((a, b) => (a === 'غير محدد') - (b === 'غير محدد') || by.get(b)[0] - by.get(a)[0]);
+      const col = A.col;
+      out.extra = { title: 'الإجمالي حسب نوع المصروف', cols: [col('نوع المصروف'), col('عدد المستندات'), col('الصافي', 1), col('الضريبة', 1), col('الإجمالي', 1)],
+        rows: ks.map(k => { const x = by.get(k); return [k, int(x[2]), V.r2(x[0]), V.r2(x[1]), V.r2(x[0] + x[1])]; }),
+        foot: null };
+      const t = Array.from(by.values()).reduce((a, x) => [a[0] + x[0], a[1] + x[1]], [0, 0]);
+      out.extra.foot = ['الإجمالي', int(items.length), V.r2(t[0]), V.r2(t[1]), V.r2(t[0] + t[1])];
+    }
+    return out;
+  }
+  /* the expense type cell: an input the user writes in (kept on the invoice, and for its supplier) */
+  function etCell(v, row) {
+    if (row.ro || !row.ref) return esc(v || '');
+    const id = 'rbet-' + row.ref.replace(/[^\w-]/g, '_');
+    return '<input id="' + id + '" class="et-in' + (row.auto ? ' auto' : '') + '" data-et="' + esc(row.ref) + '" data-keep list="rb-et" value="' + esc(v || '') + '" placeholder="اكتب النوع…"' + (row.auto ? ' title="من آخر نوع اتكتب للمورد ده"' : '') + '>';
+  }
+  // a click anywhere outside the columns menu closes it
+  document.addEventListener('click', (ev) => { const d = document.getElementById('rb-cols'); if (d && d.open && !ev.target.closest('.colpick')) { d.open = false; ui.rbColsOpen = ''; } });
+  function bindBooks() {
+    const d = $('#rb-cols'); if (d) d.addEventListener('toggle', () => { ui.rbColsOpen = d.open ? '1' : ''; });
+    $$('[data-et]').forEach(el => el.addEventListener('change', () => {
+      const [rid, ri] = [el.dataset.et.slice(0, el.dataset.et.lastIndexOf(':')), Number(el.dataset.et.slice(el.dataset.et.lastIndexOf(':') + 1))];
+      const r = retById(rid), e = VS.cache.get(rid), inv = e && e.rows[ri];
+      if (!r || !inv || inv.side !== 'P' || !A.writable()) return;
+      const v = el.value.trim();
+      if ((inv.et || '') === v) return;
+      snap(rid, 'نوع المصروف'); if (v) inv.et = v; else delete inv.et;
+      saveSoon(rid);
+      if (v) saveParties(r.client, { [partyKey(inv)]: { et: v, name: inv.name } });
+      el.classList.remove('auto');
+      A.scheduleRender();
+    }));
   }
   function pageReports(key) {
     if (!REPS.some(x => x[0] === key)) key = 'months';
@@ -1805,14 +1896,26 @@
     }
     if (key === 'due') f = '<select data-ui="duClient">' + options(A.clientOptions(true), ui.duClient, 'جميع الشركات') + '</select><select data-ui="duAge">' + options([['late', 'المتأخر فقط']].concat(AGE), ui.duAge, 'كل الأعمار') + '</select>';
     if (key === 'summary') f = '<select data-ui="rsYear">' + options(years, ui.rsYear, 'جميع السنوات') + '</select><select data-ui="rbClient">' + options(A.clientOptions(true), ui.rbClient, 'جميع الشركات') + '</select>';
-    if (key === 'books') f = '<select data-ui="rbClient">' + options(A.clientOptions(true), ui.rbClient, 'اختر الشركة…') + '</select><select data-ui="rbSide">' + options([['S', 'دفتر المبيعات'], ['P', 'دفتر المشتريات والمصروفات']], ui.rbSide) + '</select>' +
-      '<label class="inl">من <input type="date" data-ui="rbFrom" value="' + esc(ui.rbFrom) + '"></label><label class="inl">إلى <input type="date" data-ui="rbTo" value="' + esc(ui.rbTo) + '"></label>';
+    if (key === 'books') {
+      const ys = ui.rbClient ? bookYears(ui.rbClient) : [], yv = ui.rbYear === 'range' ? 'range' : ui.rbClient ? bookYear(ui.rbClient) : '';
+      const yo = (ys.length ? ys : [yv || String(new Date().getFullYear())]).map(y => [y, 'سنة ' + y]).concat([['range', 'فترة محددة…']]);
+      const nh = (rep.allCols || []).filter(c => c.hidden).length;
+      f = '<select data-ui="rbClient">' + options(A.clientOptions(true), ui.rbClient, 'اختر الشركة…') + '</select>' +
+        '<div class="seg" role="tablist">' + BOOKS.map(([k, l]) => '<button type="button" class="' + (bookSide() === k ? 'on' : '') + '" data-act="vat-book" data-v="' + k + '">' + esc(l.replace('دفتر ', '')) + '</button>').join('') + '</div>' +
+        '<select data-ui="rbYear">' + options(yo, yv) + '</select>' +
+        (ui.rbYear === 'range' ? '<label class="inl">من <input type="date" data-ui="rbFrom" value="' + esc(ui.rbFrom) + '"></label><label class="inl">إلى <input type="date" data-ui="rbTo" value="' + esc(ui.rbTo) + '"></label>' : '') +
+        (rep.allCols && rep.allCols.length && !rep.needClient ? '<details class="colpick" id="rb-cols"' + (ui.rbColsOpen ? ' open' : '') + '><summary class="btn">▦ الأعمدة' + (nh ? ' <span class="hint">(' + int(nh) + ' مخفي)</span>' : '') + '</summary><div class="colmenu">' +
+          rep.allCols.map(c => '<a href="#" data-act="vat-rb-col" data-c="' + c.id + '"' + (c.hidden ? '' : ' class="on"') + '><i>' + (c.hidden ? '' : '✓') + '</i>' + esc(c.h) + (c.empty ? ' <span class="hint">فاضي</span>' : '') + '</a>').join('') +
+          '<hr><a href="#" data-act="vat-rb-col" data-c="*"><i></i>إظهار كل الأعمدة</a><a href="#" data-act="vat-rb-col" data-c="-"><i></i>رجوع للافتراضي</a></div></details>' : '');
+    }
     const canExp = S.downloads && !rep.needClient && !(rep.pending && key === 'books');
     h += '<div class="toolbar">' + f + '<span class="grow"></span>' + (canExp ? '<button type="button" class="btn" data-act="vat-rep-pdf" data-key="' + key + '">⤓ PDF</button><button type="button" class="btn" data-act="vat-rep-xlsx" data-key="' + key + '">⤓ Excel</button>' : '') + '</div>';
     if (rep.needClient) return h + '<div class="card"><div class="empty">اختر الشركة لعرض الدفتر.</div></div></div>';
+    const dl = key === 'books' && bookSide() === 'E' ? '<datalist id="rb-et">' + (rep.types || []).map(t => '<option value="' + esc(t) + '">').join('') + '</datalist>' : '';
+    if (key === 'books' && bookSide() === 'E' && !rep.pending) h += '<div class="note info">اكتب نوع كل مصروف في عموده، والبرنامج يفتكره للمورد: أي مصروف تاني من نفس المورد بياخد نفس النوع تلقائي (بيظهر بلون أفتح) لحد ما تغيّره.</div>';
     if (rep.pending && key === 'books') return h + '<div class="loading">جارٍ تحميل فواتير ' + int(rep.pending) + ' إقرار…</div></div>';
     if (rep.pending) h += '<div class="note info">جارٍ تجهيز تقسيم المبيعات والمشتريات لـ ' + int(rep.pending) + ' إقرار محفوظ قبل إضافة التقسيم… (مرة واحدة فقط)</div>';
-    return h + '<section class="card"><header><h2>' + esc(rep.title) + '</h2><span class="hint">' + esc(rep.ctx || '') + '</span></header><div class="tablewrap">' + A.tableHtml(rep) + '</div></section>' +
+    return h + dl + '<section class="card"><header><h2>' + esc(rep.title) + '</h2><span class="hint">' + esc(rep.ctx || '') + '</span></header><div class="tablewrap' + (key === 'books' ? ' book' : '') + '">' + A.tableHtml(rep) + '</div></section>' +
       (rep.extra ? '<section class="card"><header><h2>' + esc(rep.extra.title) + '</h2></header><div class="tablewrap">' + A.tableHtml(rep.extra) + '</div></section>' : '') + '</div>';
   }
 
@@ -1876,7 +1979,14 @@
       case 'vat-due-clear': ui.duClient = ''; ui.duStaff = ''; ui.duAge = ''; return A.renderPage();
       case 'vat-bulk': return r ? bulk(r, el.dataset.op) : null;
       case 'vat-list-status': ui.vStatus = el.dataset.v; return A.go('vat-list');
-      case 'vat-book': ui.rbSide = el.dataset.v; return A.go('vat-rep-books');
+      case 'vat-book': ui.rbSide = el.dataset.v; ui.rbColsOpen = ''; return A.go('vat-rep-books');
+      case 'vat-rb-col': {
+        const side = bookSide(), hid = rbHidden(), c = el.dataset.c, rep = booksData();
+        if (c === '*') for (const x of rep.allCols) hid[side + ':' + x.id] = false;
+        else if (c === '-') for (const k of Object.keys(hid)) { if (k.startsWith(side + ':')) delete hid[k]; }
+        else { const x = rep.allCols.find(y => y.id === c); if (x) hid[side + ':' + c] = !x.hidden; }
+        rbSave(); ui.rbColsOpen = '1'; return A.renderPage();
+      }
       case 'vat-multi': return r && A.writable() ? openMultiSales(r) : null;
       case 'vat-undo': return r ? undo(r.id) : null;
       case 'vat-filter': ui.vStatus = ui.vStatus === el.dataset.v ? '' : el.dataset.v; return A.renderPage();
@@ -1904,7 +2014,7 @@
           if (ok) { VS.cache.delete(x.id); closeModal(); A.go('vat-list'); toast('تم حذف الإقرار'); }
         });
       }
-      case 'vat-rep-pdf': { const rep = repData(el.dataset.key); return A.makePdf(A.fileName(rep.title + ' ' + (rep.ctx || '')) + '.pdf', A.pdfHead(rep.title, rep.ctx) + A.tableHtml(rep) + (rep.extra ? '<h2>' + esc(rep.extra.title) + '</h2>' + A.tableHtml(rep.extra) : ''), rep.landscape); }
+      case 'vat-rep-pdf': { const rep = repData(el.dataset.key); rep.cols = rep.cols.map(c => c.fmt ? Object.assign({}, c, { fmt: null }) : c); return A.makePdf(A.fileName(rep.title + ' ' + (rep.ctx || '')) + '.pdf', A.pdfHead(rep.title, rep.ctx) + A.tableHtml(rep) + (rep.extra ? '<h2>' + esc(rep.extra.title) + '</h2>' + A.tableHtml(rep.extra) : ''), rep.landscape); }
       case 'vat-rep-xlsx': {
         const rep = repData(el.dataset.key);
         const aoa = (x) => { const rows = (x.groups ? [x.groups.flatMap(([l, n]) => [l || null].concat(new Array(n - 1).fill(null)))] : []).concat([x.cols.map(c => c.h)], x.rows.map(y => y.map(v => v === '' ? null : v))); if (x.foot && x.rows.length) rows.push(x.foot); return rows; };
@@ -1919,7 +2029,7 @@
     if (k === 'vat') return [L('لوحة الإقرارات', '#vat'), A('+ إقرار جديد', 'vat-new')];
     if (k === 'vat-list') return [L('جميع الإقرارات', '#vat-list'), W ? L('⤒ إقرارات قديمة من شيت البوابة', '#vat-hist') : null, { label: 'المسودات', nav: 1, act: 'vat-list-status', data: { v: 'draft' } }, { label: 'جاهزة للتقديم', nav: 1, act: 'vat-list-status', data: { v: 'ready' } },
       { label: 'مقدَّمة ومطابقة', nav: 1, act: 'vat-list-status', data: { v: 'matched' } }, { label: 'مقدَّمة وبها فروق', nav: 1, act: 'vat-list-status', data: { v: 'diff' } }, A('+ إقرار جديد', 'vat-new')];
-    if (k === 'vat-rep') return REPS.map(([r, l]) => L(l, '#vat-rep-' + r)).concat([{ label: 'دفتر المبيعات', nav: 1, act: 'vat-book', data: { v: 'S' } }, { label: 'دفتر المشتريات والمصروفات', nav: 1, act: 'vat-book', data: { v: 'P' } }]).filter(x => x.href !== '#vat-rep-books');
+    if (k === 'vat-rep') return REPS.map(([r, l]) => L(l, '#vat-rep-' + r)).concat([{ label: 'دفتر المبيعات', nav: 1, act: 'vat-book', data: { v: 'S' } }, { label: 'دفتر المشتريات', nav: 1, act: 'vat-book', data: { v: 'P' } }, { label: 'دفتر المصروفات', nav: 1, act: 'vat-book', data: { v: 'E' } }]).filter(x => x.href !== '#vat-rep-books');
     if (k === 'vat-parties') return [L('الموردون والعملاء', '#vat-parties')];
     if (k === 'vat-due') return [L('كل المستحقات', '#vat-due'), { label: 'المتأخر السداد فقط', nav: 1, act: 'vat-due-age', data: { v: 'late' } }, L('تقرير الضريبة المستحقة', '#vat-rep-due'), A('⚙ إعدادات المتابعة', 'vat-pay-cfg')];
     return null;

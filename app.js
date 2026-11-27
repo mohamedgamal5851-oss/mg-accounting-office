@@ -340,11 +340,14 @@
   }
   function captureFocus() {
     const a = document.activeElement;
+    // an input outside the filters keeps its focus and what was typed in it when it has an id and data-keep
+    if (a && a.dataset && a.dataset.keep != null && a.id) return { id: a.id, v: a.value, s: a.selectionStart, e: a.selectionEnd };
     if (!a || !a.dataset || !a.dataset.ui) return null;
     return { key: a.dataset.ui, s: a.selectionStart, e: a.selectionEnd };
   }
   function restoreFocus(f) {
     if (!f) return;
+    if (f.id) { const el = document.getElementById(f.id); if (!el) return; if (el.value !== f.v) el.value = f.v; el.focus(); try { el.setSelectionRange(f.s, f.e); } catch (e) {} return; }
     const el = document.querySelector('[data-ui="' + f.key + '"]'); if (!el) return;
     el.focus();
     if (S.numCaret && S.numCaret.key === f.key) {
@@ -1214,13 +1217,20 @@
     }
     return null;
   }
-  function cellHtml(v, c) { return '<td' + (c.n ? ' class="n"' : '') + '>' + (c.n ? (v === '' || v == null ? '' : money(v)) : esc(v == null ? '' : v)) + '</td>'; }
+  function cellHtml(v, c) { return '<td' + (c.n ? ' class="n"' : c.wrap ? ' class="w"' : '') + '>' + (c.n ? (v === '' || v == null ? '' : money(v)) : esc(v == null ? '' : v)) + '</td>'; }
   function tableHtml(rep) {
     // groups: an optional header row above the columns, [label, number of columns] (an empty label leaves the cells blank)
     const grp = rep.groups ? '<tr class="grp">' + rep.groups.map(([l, n]) => '<th colspan="' + n + '"' + (l ? ' class="g"' : '') + '>' + esc(l) + '</th>').join('') + '</tr>' : '';
-    return '<table' + (rep.groups ? ' class="grouped"' : '') + '><thead>' + grp + '<tr>' + rep.cols.map(c => '<th' + (c.n ? ' class="n"' : '') + '>' + esc(c.h) + '</th>').join('') + '</tr></thead><tbody>' +
-      (rep.rows.length ? rep.rows.map(r => '<tr>' + r.map((v, i) => cellHtml(v, rep.cols[i])).join('') + '</tr>').join('') : '<tr><td colspan="' + rep.cols.length + '" class="empty none">لا توجد بيانات</td></tr>') + '</tbody>' +
-      (rep.foot && rep.rows.length ? '<tfoot><tr>' + rep.foot.map((v, i) => cellHtml(v, rep.cols[i])).join('') + '</tr></tfoot>' : '') + '</table>';
+    const tc = [rep.groups ? 'grouped' : '', rep.tcls || ''].filter(Boolean).join(' ');
+    return '<table' + (tc ? ' class="' + tc + '"' : '') + '><thead>' + grp + '<tr>' + rep.cols.map(c => '<th' + (c.n ? ' class="n"' : '') + '>' + esc(c.h) + '</th>').join('') + '</tr></thead><tbody>' +
+      (rep.rows.length ? rep.rows.map(r => '<tr' + (r.cls ? ' class="' + r.cls + '"' : '') + '>' + (r.cls ? spanRow(r, rep.cols) : r.map((v, i) => rep.cols[i].fmt ? '<td class="ed">' + rep.cols[i].fmt(v, r) + '</td>' : cellHtml(v, rep.cols[i])).join('')) + '</tr>').join('') : '<tr><td colspan="' + rep.cols.length + '" class="empty none">لا توجد بيانات</td></tr>') + '</tbody>' +
+      (rep.foot && rep.rows.length ? '<tfoot><tr>' + spanRow(rep.foot, rep.cols) + '</tr></tfoot>' : '') + '</table>';
+  }
+  /* a total row: its label spreads over the empty text cells after it, so a long label does not widen the first column */
+  function spanRow(r, cols) {
+    let k = 1;
+    if (r[0] !== '' && r[0] != null && !cols[0].n) while (k < r.length && !cols[k].n && (r[k] === '' || r[k] == null)) k++;
+    return (k > 1 ? '<td colspan="' + k + '" class="lbl">' + esc(r[0]) + '</td>' : cellHtml(r[0], cols[0])) + r.slice(k).map((v, i) => cellHtml(v, cols[k + i])).join('');
   }
 
   function pageReports(key) {
@@ -1266,24 +1276,39 @@
      drops the spaces between words and the order of brackets. Here the browser lays the document out, then each line
      of text is drawn whole with the canvas set to the element's direction, so shaping, spacing and bidi match the screen. */
   function cssColor(c) { return c && c !== 'transparent' && !/rgba\(\s*0,\s*0,\s*0,\s*0\s*\)/.test(c) ? c : null; }
+  /* page cuts [from, to, head]: head is the header of a table that goes on from the page before, drawn again at the
+     top of the page (so a long table shows its column titles on every page) */
   function pageBreaks(doc, pageH) {
-    const top0 = doc.getBoundingClientRect().top, H = doc.scrollHeight;
-    const blocks = Array.from(doc.querySelectorAll('tr, .box, .summary, .pdf-head, h2, p, .foot-note, .kv-row')).map(el => { const r = el.getBoundingClientRect(); return { t: r.top - top0, b: r.bottom - top0, h2: el.tagName === 'H2' }; });
-    const cuts = []; let start = 0;
-    while (H - start > pageH + 1) {
-      let end = start + pageH;
-      for (const k of blocks) if (k.t < end && k.b > end && k.t > start + pageH * 0.3) end = Math.min(end, k.t);
+    const top0 = doc.getBoundingClientRect().top, H = doc.scrollHeight, rel = (el) => { const r = el.getBoundingClientRect(); return { t: r.top - top0, b: r.bottom - top0 }; };
+    const blocks = Array.from(doc.querySelectorAll('tr, .box, .summary, .pdf-head, h2, p, .foot-note, .kv-row')).map(el => Object.assign(rel(el), { h2: el.tagName === 'H2' }));
+    const heads = Array.from(doc.querySelectorAll('table')).map(tb => { const th = tb.tHead, r1 = tb.tBodies[0] && tb.tBodies[0].rows[0]; return th ? { h: rel(th), tb: rel(tb), r1: r1 ? rel(r1) : rel(th) } : null; }).filter(Boolean);
+    const headAt = (pos) => { const x = heads.find(k => k.h.b <= pos + 0.5 && k.tb.b > pos + 2); return x ? [x.h.t, x.h.b] : null; };
+    const cuts = []; let start = 0, head = null;
+    for (;;) {
+      const avail = pageH - (head ? head[1] - head[0] : 0);
+      if (H - start <= avail + 1) break;
+      let end = start + avail;
+      for (const k of blocks) if (k.t < end && k.b > end && k.t > start + avail * 0.3) end = Math.min(end, k.t);
+      // a table's header never ends a page without at least its first row under it
+      for (const k of heads) if (k.h.t < end && k.r1.b >= end - 0.5 && k.h.t > start + avail * 0.3) end = Math.min(end, k.h.t);
       // a heading never ends a page
-      for (const k of blocks) if (k.h2 && k.t >= end - 40 && k.t < end && k.t > start + pageH * 0.3) end = k.t;
-      cuts.push([start, end]); start = end;
+      for (const k of blocks) if (k.h2 && k.t >= end - 40 && k.t < end && k.t > start + avail * 0.3) end = k.t;
+      cuts.push([start, end, head]); start = end; head = headAt(start);
     }
-    cuts.push([start, H]);
+    cuts.push([start, H, head]);
     return cuts;
   }
-  async function drawDocPage(doc, from, to, scale) {
-    const o = doc.getBoundingClientRect(), W = o.width;
-    const cv = document.createElement('canvas'); cv.width = Math.ceil(W * scale); cv.height = Math.ceil((to - from) * scale);
-    const g = cv.getContext('2d'); g.scale(scale, scale); g.fillStyle = '#fff'; g.fillRect(0, 0, W, to - from); g.translate(-o.left, -o.top - from);
+  async function drawDocPage(doc, from, to, scale, head) {
+    const o = doc.getBoundingClientRect(), W = o.width, hh = head ? head[1] - head[0] : 0;
+    const cv = document.createElement('canvas'); cv.width = Math.ceil(W * scale); cv.height = Math.ceil((to - from + hh) * scale);
+    const g = cv.getContext('2d'); g.scale(scale, scale); g.fillStyle = '#fff'; g.fillRect(0, 0, W, to - from + hh);
+    if (head) drawRegion(g, doc, o, head[0], head[1], 0);
+    drawRegion(g, doc, o, from, to, hh);
+    return cv;
+  }
+  /* draws the part of the document between from and to (px from its top) at y0 on the canvas */
+  function drawRegion(g, doc, o, from, to, y0) {
+    g.save(); g.translate(0, y0); g.beginPath(); g.rect(0, 0, o.width, to - from); g.clip(); g.translate(-o.left, -o.top - from);
     const inPage = (r) => r.bottom > o.top + from && r.top < o.top + to;
     const els = [doc].concat(Array.from(doc.querySelectorAll('*')));
     for (const el of els) {
@@ -1329,7 +1354,7 @@
         g.fillText(t, rtl ? l.right : l.left, (l.top + l.bottom) / 2 + 0.5);
       }
     }
-    return cv;
+    g.restore();
   }
   async function makePdf(filename, inner, landscape) {
     if (!window.html2pdf) return toast('يتطلب تنزيل PDF اتصالًا بالإنترنت عند فتح الصفحة. اتصل ثم أعد تحميل الصفحة.', true);
@@ -1347,7 +1372,7 @@
       if (document.fonts && document.fonts.ready) await document.fonts.ready;
       await Promise.all(Array.from(doc.querySelectorAll('img')).map(i => i.complete ? null : new Promise(r => { i.onload = i.onerror = r; })));
       const pxPerMm = doc.getBoundingClientRect().width / innerW;
-      for (const [a, b] of pageBreaks(doc, innerH * pxPerMm)) pages.push(await drawDocPage(doc, a, b, 2));
+      for (const [a, b, hd] of pageBreaks(doc, innerH * pxPerMm)) pages.push(await drawDocPage(doc, a, b, 2, hd));
     } catch (e) { toast((e && e.message) || 'تعذّر إعداد الملف.', true); return; }
     finally { holder.remove(); }
     previewPdf(filename, pages, landscape, innerW);
@@ -1394,7 +1419,7 @@
     const doc = document.createElement('div'); doc.className = 'pdf-doc'; doc.dir = 'rtl'; const innerW = landscape ? 281 : 194; doc.style.width = innerW + 'mm'; doc.innerHTML = inner;
     holder.appendChild(doc); document.body.appendChild(holder); await document.fonts.ready;
     const pxPerMm = doc.getBoundingClientRect().width / innerW, out = [];
-    for (const [a, b] of pageBreaks(doc, ((landscape ? 210 : 297) - 24) * pxPerMm)) out.push((await drawDocPage(doc, a, b, 2)).toDataURL('image/png'));
+    for (const [a, b, hd] of pageBreaks(doc, ((landscape ? 210 : 297) - 24) * pxPerMm)) out.push((await drawDocPage(doc, a, b, 2, hd)).toDataURL('image/png'));
     holder.remove(); return out;
   };
   function pdfReport(key) {

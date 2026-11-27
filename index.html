@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-27 13:37">
+<meta name="of-build" content="2026-11-27 13:56">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -252,6 +252,28 @@ a { color: var(--accent); }
 .grid2e { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .toolbar .grow { flex: 1; }
+/* books: sales / purchases / expenses */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: transparent; padding: 7px 16px; font: inherit; font-size: 13px; cursor: pointer; color: var(--muted); }
+.seg button + button { border-inline-start: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+.toolbar:has(.colpick) { position: relative; z-index: 6; }
+.colpick { position: relative; }
+.colpick > summary { list-style: none; cursor: pointer; }
+.colpick > summary::-webkit-details-marker { display: none; }
+.colpick .colmenu { position: absolute; z-index: 30; top: calc(100% + 6px); inset-inline-start: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(19, 41, 75, .14); padding: 6px; min-width: 240px; max-height: 62vh; overflow: auto; }
+.colpick .colmenu a { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; color: var(--ink); text-decoration: none; font-size: 13px; }
+.colpick .colmenu a:hover { background: var(--hover); }
+.colpick .colmenu a:not(.on) { color: var(--muted); }
+.colpick .colmenu a i { width: 14px; font-style: normal; color: var(--accent); font-weight: 700; }
+.colpick .colmenu a .hint { margin-inline-start: auto; font-size: 11.5px; }
+.colpick .colmenu hr { border: 0; border-top: 1px solid var(--line-soft); margin: 4px 0; }
+tr.mtot td { font-weight: 700; background: var(--accent-soft); color: var(--brand); border-top: 1px solid var(--line); }
+.tablewrap.book td, .tablewrap.book th { white-space: nowrap; }
+td.ed { padding-top: 3px; padding-bottom: 3px; }
+.et-in { width: 180px; padding: 4px 8px; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.et-in.auto { color: var(--muted); font-style: italic; background: var(--bg); }
+.et-in:focus { outline: 2px solid var(--gold); outline-offset: 0; }
 .toolbar label.inl { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12.5px; }
 input[type=search], input[type=text], input[type=date], input[type=month], input[type=number], input[type=email], input[type=tel], select, textarea { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-width: 0; }
 input[type=search] { min-width: 220px; }
@@ -357,6 +379,10 @@ td .sub { color: var(--muted); font-size: 12px; }
 .pdf-doc td.n, .pdf-doc th.n { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pdf-doc td.n { text-align: left; direction: ltr; }
 .pdf-doc td.none { text-align: center; color: #526173; padding: 12px; }
+.pdf-doc table.book th { font-size: 10px; padding: 5px 4px; }
+.pdf-doc table.book td { font-size: 10px; padding: 4px 4px; white-space: nowrap; overflow-wrap: normal; }
+.pdf-doc table.book td.w { white-space: normal; min-width: 70px; }
+.pdf-doc tr.mtot td { font-weight: 700; background: #E9EDF4 !important; color: #13294B; border-top: 1px solid #A6824A; }
 .pdf-doc tfoot td { font-weight: 700; background: #F3EEE3 !important; color: #13294B; }
 .pdf-doc .box { border: 1px solid #E6E0D3; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 20px; font-size: 11.5px; }
 .pdf-doc .box span b { font-weight: 700; color: #13294B; }
