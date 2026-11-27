@@ -719,7 +719,8 @@
         vr.forEach((x, i) => {
           const lbl = esc(h.freq === 'quarterly' ? 'الربع المنتهي ' + A.monthLabel(x.per) : A.monthLabel(x.per));
           t2 += '<tr' + (pv[i] ? ' class="hv-top"' : '') + '><td>' + lbl + (pv[i] ? ' <small class="hint">الشيت</small>' : '') + '</td>' + cells(bs[i], pv[i] ? Object.assign({ exp: 0 }, pv[i]) : null) + '</tr>';
-          if (pv[i]) t2 += '<tr class="hv-sub"><td><small>الإقرار المقدَّم</small></td>' + cols.map(([k]) => '<td class="n">' + (k === 'exp' ? '' : pv[i][k] ? money(pv[i][k]) : '—') + '</td>').join('') + '</tr>';
+          const nsBad = pv[i] && (Math.abs((bs[i].sS || 0) - (pv[i].sS || 0)) >= 1 || Math.abs((bs[i].sG || 0) - (pv[i].sG || 0)) >= 1);
+          if (pv[i]) t2 += '<tr class="hv-sub"><td><small>الإقرار المقدَّم</small>' + (nsBad ? ' <button type="button" class="btn sm" data-act="vat-hist-ns" data-per="' + x.per + '">اكتشف فرق السلع والخدمات</button>' : '') + '</td>' + cols.map(([k]) => '<td class="n">' + (k === 'exp' ? '' : pv[i][k] ? money(pv[i][k]) : '—') + '</td>').join('') + '</tr>';
         });
         t2 += '</tbody><tfoot><tr><td>الإجمالي</td>' + cols.map(([k]) => '<td class="n">' + (tot[k] ? money(tot[k]) : '—') + '</td>').join('') + '</tr></tfoot></table>';
         o += step('', 'المبيعات والمشتريات بالقيمة', 'من الشيتات بعد تصنيف الموردين' + (pv.some(Boolean) ? '، وتحتها أرقام الإقرار المقدَّم (الخانة الحمرا فيها فرق)' : ''), '<div class="tablewrap">' + t2 + '</div>');
@@ -883,6 +884,102 @@
     else A.renderPage();
   }
 
+  /* ---------------- goods or services: where the split differs from the submitted return, and putting it right ----------------
+     Sales lines are grouped by item (its portal code, else its description); lines of invoices read without their items are
+     grouped by customer. Changing a group changes every such line in what is open (a return, or the old returns' sheets),
+     and is kept for that item (or customer), so the next imports take it. */
+  const isSumLine = (l) => !!l.sum || /^فاتورة (مبيعات إلى|مشتريات من) /.test(String(l.d || ''));
+  const nsKey = (inv, l) => isSumLine(l) ? 'sum:' + (inv.reg || inv.name) : V.itemKey(l);
+  function partyMap(cid) {
+    const m = Object.assign({}, partyDoc(cid).map || {}), mine = (VS.pmap || {})[cid] || {};
+    for (const [k, v] of Object.entries(mine)) m[k] = Object.assign({}, m[k] || {}, v);
+    return m;
+  }
+  function nsGroups(invs, cid) {
+    const m = new Map(), mm = partyMap(cid);
+    for (const inv of invs) {
+      if (inv.side !== 'S' || !V.inReturn(inv)) continue;
+      const sg = inv.dt === 3 ? -1 : 1;
+      for (const l of inv.lines) {
+        const k = V.lineKind(inv, l); if (k !== 'sG' && k !== 'sS') continue;
+        const key = nsKey(inv, l), sum = key.startsWith('sum:');
+        const g = m.get(key) || { key, d: sum ? 'فواتير من غير بنود · ' + inv.name : l.d || '—', code: sum ? '' : String(l.code || ''), n: new Set(), lines: 0, net: 0, cust: new Set(), party: inv.reg || inv.name, sum };
+        g.n.add(l.n === 'S' ? 'S' : 'G'); g.lines++; g.net += sg * (Number(l.net) || 0); g.cust.add(inv.name);
+        m.set(key, g);
+      }
+    }
+    for (const g of m.values()) {
+      g.net = V.r2(g.net); g.cur = g.n.size > 1 ? 'mix' : Array.from(g.n)[0];
+      const im = !g.sum && mm['I:' + g.key], pm = g.cust.size === 1 && mm['S:' + g.party], w = g.sum ? '' : V.serviceWord(g.d);
+      g.why = im && im.n ? 'محفوظ للصنف' : pm && pm.n ? 'محفوظ للعميل «' + Array.from(g.cust)[0] + '»' : g.sum ? 'فاتورة من غير بنود (سطر واحد)' : w ? 'كلمة «' + w + '» في الوصف' : 'افتراضي: سلعة';
+      if (g.cur !== 'mix' && !(im && im.n) && !(pm && pm.n) && !g.sum && (w ? 'S' : 'G') !== g.cur) g.why = 'اتعدل يدوي في الإقرار';
+    }
+    return Array.from(m.values()).sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+  }
+  /* the item, or two or three items, whose value is the gap: d > 0 means the program has that much more in services */
+  function nsSuggest(groups, d) {
+    const from = d > 0 ? 'S' : 'G', need = Math.abs(d), tol = Math.max(1, need * 0.0005);
+    const c = groups.filter(g => g.cur === from && g.net > 0 && g.net <= need + tol).slice(0, 30);
+    for (const g of c) if (Math.abs(g.net - need) <= tol) return [g];
+    for (let i = 0; i < c.length; i++) for (let j = i + 1; j < c.length; j++) if (Math.abs(c[i].net + c[j].net - need) <= tol) return [c[i], c[j]];
+    for (let i = 0; i < c.length; i++) for (let j = i + 1; j < c.length; j++) for (let k = j + 1; k < c.length; k++) if (Math.abs(c[i].net + c[j].net + c[k].net - need) <= tol) return [c[i], c[j], c[k]];
+    return null;
+  }
+  function nsApply(invs, cid, keys, n) {
+    const mem = {};
+    for (const inv of invs) if (inv.side === 'S') for (const l of inv.lines) {
+      const key = nsKey(inv, l); if (!keys.includes(key)) continue;
+      l.n = n;
+      if (key.startsWith('sum:')) mem['S:' + key.slice(4)] = { n, name: inv.name }; else mem['I:' + key] = { n, name: l.d || '' };
+    }
+    saveParties(cid, mem);
+  }
+  /* ctx: { cid, invs: () => invoices, target: {sG, sS} | null, apply: (keys, n) => void, ro } */
+  function openNS(ctx) {
+    const st = { q: '', tG: ctx.target && ctx.target.sG != null ? String(ctx.target.sG) : '', tS: ctx.target && ctx.target.sS != null ? String(ctx.target.sS) : '' };
+    const bg = modal('مراجعة السلع والخدمات', '<div id="ns-body"></div>', '<button type="button" class="btn" data-close>إغلاق</button>', true);
+    const draw = (focus) => {
+      const invs = ctx.invs(), gs = nsGroups(invs, ctx.cid), b = V.breakdown(invs);
+      const tS = hNum(st.tS), tG = hNum(st.tG), has = tS != null || tG != null;
+      // the gap in services; with only the goods figure typed, the gap in goods says the same the other way round
+      const dS = !has ? 0 : tS != null ? V.r2(b.sS - tS) : V.r2(tG - b.sG);
+      const sug = has && Math.abs(dS) >= 1 ? nsSuggest(gs, dS) : null, sugKeys = new Set((sug || []).map(g => g.key));
+      const qq = st.q.trim().toLowerCase(), list = gs.filter(g => !qq || (g.d + ' ' + g.code + ' ' + Array.from(g.cust).join(' ')).toLowerCase().includes(qq));
+      let o = '<div class="ns-top"><div><small>حسب البرنامج</small><span>سلع <b>' + money(b.sG) + '</b></span><span>خدمات <b>' + money(b.sS) + '</b></span></div>' +
+        '<div><small>في الإقرار المقدَّم' + (ctx.target ? '' : ' (اكتبهم من الإقرار)') + '</small><label>سلع <input id="ns-tg" class="hin" inputmode="decimal" value="' + esc(st.tG) + '"></label><label>خدمات <input id="ns-ts" class="hin" inputmode="decimal" value="' + esc(st.tS) + '"></label></div>' +
+        (has ? '<div><small>الفرق في الخدمات</small><b class="' + (Math.abs(dS) < 1 ? 'match-ok' : 'match-bad') + '">' + (Math.abs(dS) < 1 ? '✓ مطابق' : (dS > 0 ? 'البرنامج أكتر بـ ' : 'البرنامج أقل بـ ') + money(Math.abs(dS))) + '</b></div>' : '') + '</div>';
+      if (sug) o += '<div class="note warn ns-sug-note">الفرق غالبًا من ' + (sug.length > 1 ? 'الأصناف دي' : 'الصنف ده') + ': ' + sug.map(g => '«' + esc(g.d) + '» (' + money(g.net) + ')').join(' + ') +
+        '. البرنامج حاسبها ' + (dS > 0 ? 'خدمات' : 'سلع') + ' والإقرار حاسبها ' + (dS > 0 ? 'سلع' : 'خدمات') + '.' + (ctx.ro ? '' : ' <button type="button" class="btn sm primary" id="ns-apply">حوّلها ' + (dS > 0 ? 'سلع' : 'خدمات') + '</button>') + '</div>';
+      else if (has && Math.abs(dS) >= 1) o += '<div class="note">مفيش صنف ولا اتنين ولا تلاتة مجموعهم بيساوي الفرق بالظبط، يعني غالبًا الفرق من أكتر من حاجة. الأصناف مترتبة بالقيمة، وعمود «ليه» بيوضح سبب كل تصنيف. غيّر اللي متصنف غلط والفرق هيتحدث على طول.</div>';
+      o += '<div class="toolbar"><input id="ns-q" placeholder="ابحث بالصنف أو الكود أو العميل…" value="' + esc(st.q) + '" style="flex:1;max-width:360px"><span class="grow"></span><span class="hint">' + int(list.length) + ' صنف</span></div>' +
+        '<div class="tablewrap ns-list"><table class="vat-tbl"><thead><tr><th>الصنف</th><th>الكود</th><th class="n">البنود</th><th class="n">القيمة</th><th>سلعة / خدمة</th><th>ليه اتصنف كده</th></tr></thead><tbody>' +
+        (list.length ? list.map(g => '<tr class="' + (sugKeys.has(g.key) ? 'ns-hit' : '') + '"><td>' + esc(g.d) + (g.cust.size === 1 && !g.sum ? '<div class="hhint">' + esc(Array.from(g.cust)[0]) + '</div>' : g.cust.size > 1 ? '<div class="hhint">' + int(g.cust.size) + ' عميل</div>' : '') + '</td><td class="num">' + esc(g.code) + '</td><td class="n">' + int(g.lines) + '</td><td class="n">' + money(g.net) + '</td>' +
+          '<td><select data-ns="' + esc(g.key) + '"' + (ctx.ro ? ' disabled' : '') + '>' + (g.cur === 'mix' ? '<option value="" selected>مختلط</option>' : '') + options([['G', 'سلعة'], ['S', 'خدمة']], g.cur === 'mix' ? null : g.cur) + '</select></td><td class="hint">' + esc(g.why) + '</td></tr>').join('') :
+          '<tr><td colspan="6" class="empty">لا توجد مبيعات خاضعة.</td></tr>') + '</tbody></table></div>';
+      $('#ns-body', bg).innerHTML = o;
+      const done = () => { A.renderPage(); draw(); };
+      $$('[data-ns]', bg).forEach(el => el.addEventListener('change', () => { if (el.value) { ctx.apply([el.dataset.ns], el.value); done(); } }));
+      const ap = $('#ns-apply', bg); if (ap) ap.addEventListener('click', () => { ctx.apply(sug.map(g => g.key), dS > 0 ? 'G' : 'S'); toast('اتحولت ' + int(sug.length) + ' صنف'); done(); });
+      const q = $('#ns-q', bg); q.addEventListener('input', () => { st.q = q.value; draw('ns-q'); });
+      for (const [id, k] of [['ns-tg', 'tG'], ['ns-ts', 'tS']]) { const el = $('#' + id, bg); el.addEventListener('change', () => { st[k] = el.value.trim(); if (ctx.onTarget) ctx.onTarget(hNum(st.tG), hNum(st.tS)); draw(); }); }
+      if (focus) { const f = $('#' + focus, bg); if (f) { f.focus(); const n = f.value.length; try { f.setSelectionRange(n, n); } catch (e) {} } }
+    };
+    draw();
+  }
+  function openNSRet(r) {
+    const e = VS.cache.get(r.id); if (!e || !e.loaded) return toast('الفواتير لسه بتتحمل…');
+    // the submitted split: read from the old portal's PDF, or typed here once and kept with the submission
+    const pv = r.sub && r.sub.parsed && r.sub.parsed.vals, typed = r.sub && r.sub.split;
+    openNS({ cid: r.client, invs: () => (VS.cache.get(r.id) || e).rows, target: pv ? { sG: pv.sG, sS: pv.sS } : typed || null, ro: !A.writable() || !!r.locked,
+      onTarget: pv || !r.sub || !A.writable() ? null : (sG, sS) => { const x = retById(r.id); if (x && x.sub) write(() => S.db.doc('vatReturns/' + r.id).update({ sub: clean(Object.assign({}, x.sub, { split: { sG, sS } })) })); },
+      apply: (keys, n) => { const x = VS.cache.get(r.id); if (!x) return; snap(r.id, 'تغيير سلع / خدمات'); nsApply(x.rows, r.client, keys, n); saveSoon(r.id); } });
+  }
+  function openNSHist(per) {
+    const h = H(), pv = h.pdf[per] && h.pdf[per].vals;
+    openNS({ cid: h.client, invs: () => h.invs.filter(inv => histPer(h, inv.date) === per), target: pv ? { sG: pv.sG, sS: pv.sS } : null, ro: false,
+      apply: (keys, n) => nsApply(h.invs, h.client, keys, n) });
+  }
+
   /* ---------------- list ---------------- */
   function pageList() {
     const all = rets(), years = Array.from(new Set(all.map(r => r.period.slice(0, 4)))).sort().reverse();
@@ -1036,7 +1133,7 @@
     if (A.writable()) h += '<div class="toolbar"><label class="inl">الرصيد الدائن السابق <input type="number" step="0.01" min="0" id="vat-prev" value="' + esc(calc.prev) + '" style="width:140px"></label>' +
       (prevAuto ? '<span class="hint">' + (p ? 'يتغير تلقائيًا مع الإقرار السابق، وإذا أدخلت رقمًا هنا يُثبَّت.' : 'لا يوجد إقرار سابق مسجل؛ أدخل الرصيد الافتتاحي.') + '</span>' : '<button type="button" class="btn sm" data-act="vat-prev-auto" data-id="' + r.id + '">إعادته إلى الحساب التلقائي</button>') + '</div>';
     h += payCard(r);
-    if (rows.length) h += '<section class="card"><header><h2>المبيعات والمشتريات حسب النوع</h2><span class="hint">قيم صافية بعد إشعارات الإضافة والخصم · المصروفات خارج الإقرار</span></header><div class="body">' + brTables(V.breakdown(rows)) + '</div></section>';
+    if (rows.length) h += '<section class="card"><header><h2>المبيعات والمشتريات حسب النوع</h2><span class="hint">قيم صافية بعد إشعارات الإضافة والخصم · المصروفات خارج الإقرار</span><span class="grow"></span><button type="button" class="btn sm" data-act="vat-ns" data-id="' + r.id + '">مراجعة السلع والخدمات</button></header><div class="body">' + brTables(V.breakdown(rows)) + '</div></section>';
     h += form10(calc);
     const k = calc.counts;
     h += '<section class="card"><header><h2>المستندات</h2></header><div class="body"><div class="kv">' +
@@ -1149,7 +1246,18 @@
       const f = x.isCount ? int : money;
       h += '<tr class="' + (x.ok ? '' : 'row-crit') + '"><td>' + esc(x.label) + '</td><td class="n">' + f(x.mine) + '</td><td class="n">' + (x.theirs == null ? 'غير موجود' : f(x.theirs)) + '</td><td class="n">' + (x.theirs == null ? '' : f(V.r2(x.mine - x.theirs))) + '</td><td>' + (x.ok ? '<span class="match-ok">✓</span>' : '<span class="match-bad">✗</span>') + '</td></tr>';
     }
-    return h + '</tbody></table></div></section>';
+    h += '</tbody></table></div></section>';
+    // the old portal's return gives its sales and inputs by kind: compare them, goods and services included
+    const pv = s.parsed && s.parsed.vals;
+    if (pv) {
+      const b = V.breakdown(rows), L = [['sG', 'مبيعات سلع خاضعة'], ['sS', 'مبيعات خدمات'], ['sEx', 'مبيعات معفاة'], ['s0', 'مبيعات صفر / تصدير'], ['sAll', 'إجمالي المبيعات'], ['pT', 'مشتريات خاضعة'], ['pEx', 'مشتريات معفاة'], ['pAll', 'إجمالي المشتريات']];
+      const bad = L.some(([k]) => Math.abs((b[k] || 0) - (pv[k] || 0)) >= 1), nsBad = Math.abs((b.sS || 0) - (pv.sS || 0)) >= 1 || Math.abs((b.sG || 0) - (pv.sG || 0)) >= 1;
+      h += '<section class="card"><header><h2>' + (bad ? '<span class="match-bad">✗ المبيعات والمشتريات بالقيمة</span>' : '<span class="match-ok">✓ المبيعات والمشتريات بالقيمة</span>') + '</h2><span class="grow"></span>' +
+        '<button type="button" class="btn sm' + (nsBad ? ' primary' : '') + '" data-act="vat-ns" data-id="' + r.id + '">اكتشف فرق السلع والخدمات</button></header><div class="tablewrap"><table><thead><tr><th>البند</th><th class="n">حسب النظام</th><th class="n">في الإقرار المقدَّم</th><th class="n">الفرق</th></tr></thead><tbody>' +
+        L.filter(([k]) => b[k] || pv[k]).map(([k, l]) => { const d = V.r2((b[k] || 0) - (pv[k] || 0)); return '<tr class="' + (Math.abs(d) >= 1 ? 'row-crit' : '') + '"><td>' + esc(l) + '</td><td class="n">' + money(b[k] || 0) + '</td><td class="n">' + money(pv[k] || 0) + '</td><td class="n">' + (Math.abs(d) >= 0.01 ? money(d) : '') + '</td></tr>'; }).join('') +
+        '</tbody></table></div></section>';
+    }
+    return h;
   }
 
   /* ---------------- binding (inputs that are not plain filters) ---------------- */
@@ -1739,6 +1847,8 @@
       case 'vat-hist-paste': return openHistPaste();
       case 'vat-hist-copy': return histCopySystem();
       case 'vat-hist-save': return saveHist();
+      case 'vat-hist-ns': return openNSHist(el.dataset.per);
+      case 'vat-ns': { const x = retById(el.dataset.id); return x ? openNSRet(x) : null; }
       case 'vat-lock': { const x = retById(el.dataset.id); return x && A.writable() ? write(() => S.db.doc('vatReturns/' + x.id).update({ locked: el.dataset.v === '1' })).then(ok => ok && toast(el.dataset.v === '1' ? 'اتقفل الإقرار' : 'اتفتح القفل')) : null; }
       case 'vat-accept': {
         const x = retById(el.dataset.id); if (!x || !x.sub || !A.writable()) return;

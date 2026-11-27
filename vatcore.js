@@ -50,8 +50,13 @@
   function quarterEnd(ym) { const [y, m] = ym.split('-').map(Number); return y + '-' + pad2(Math.ceil(m / 3) * 3); }
 
   /* ---------- classification ---------- */
-  const SERVICE_RX = /خدم|service|fee|عمول|commission|اشتراك|subscri|شحن|shipping|deliver|توصيل|نقل|ايجار|إيجار|rent|صيان|mainten|استشار|consult|اعلان|إعلان|advert|marketing|تسويق|اتعاب|أتعاب|تدريب|training|حجز|booking|license|ترخيص|hosting|استضاف|برمج|software/i;
-  const isServiceText = (d) => SERVICE_RX.test(String(d || ''));
+  /* a service by the words of its description. Each word must start a word (after و / ب / ل / ال …), so «مستخدم»,
+     «استخدام», «متنقل», «coffee» or «current» are not taken for services */
+  const SERVICE_RX = /(?:^|[\s\-_\/.,:;()«»"'])(?:و|ف|ب|ل|ال|وال|بال|لل|فال)?(خدم|عمول|اشتراك|شحن|توصيل|نقل|ايجار|إيجار|صيان|استشار|اعلان|إعلان|تسويق|اتعاب|أتعاب|تدريب|حجز|ترخيص|استضاف|برمج)|\b(services?|fees?|commissions?|subscriptions?|shipping|delivery|rent(?:al)?|maintenance|consult\w*|advert\w*|marketing|training|booking|licen[cs]es?|hosting|software)\b/i;
+  const serviceWord = (d) => { const m = String(d || '').match(SERVICE_RX); return m ? (m[1] || m[2]) : ''; };
+  const isServiceText = (d) => !!serviceWord(d);
+  /* one item across invoices: its code from the portal, else its description */
+  const itemKey = (l) => l && String(l.code || '').trim() ? 'c:' + String(l.code).trim() : 'd:' + norm(l && l.d).slice(0, 80);
   const VALID_REG = (r) => /^\d{9}$/.test(r);
   function snapRate(net, vat) {
     if (!net || Math.abs(vat) < 0.005) return 0;
@@ -60,7 +65,7 @@
     return Math.round(r * 100) / 100;
   }
   /* default codes for a fresh line. memory = what the office set before for this party (o for purchases, n for sales) */
-  function defaultLine(side, line, mem) {
+  function defaultLine(side, line, mem, itemMem) {
     const l = Object.assign({ d: '', code: '', unit: '', q: 1, p: 0, net: 0, vat: 0 }, line);
     l.net = r5(l.net); l.vat = r5(l.vat);
     if (l.rate == null) l.rate = snapRate(l.net, l.vat);
@@ -69,7 +74,8 @@
       // e = expense: kept in the purchases book (and for Form 41 later) but outside the VAT return and the upload sheet
       if (l.e == null) l.e = !!(mem && mem.e);
     } else {
-      if (l.n == null) l.n = mem && mem.n ? mem.n : (isServiceText(l.d) ? 'S' : 'G');
+      // goods or service: what the office set for this item, then for this customer, then the words of the item (not of a summary line, which only names the customer)
+      if (l.n == null) l.n = itemMem && itemMem.n ? itemMem.n : mem && mem.n ? mem.n : (!l.sum && isServiceText(l.d) ? 'S' : 'G');
       if (l.o == null) l.o = l.rate === 0 ? 7 : 1;
     }
     return l;
@@ -166,8 +172,8 @@
           while (take < g.length && Math.abs(acc - net) > 0.05) { acc += g[take].net; take++; }
           if (Math.abs(acc - net) <= 0.05) { lines = g.splice(0, take); }
         }
-        if (!lines) lines = [{ d: name ? 'فاتورة ' + (s === 'P' ? 'مشتريات من ' : 'مبيعات إلى ') + name : 'فاتورة', q: 1, p: net, net, vat }];
-        inv.lines = lines.map(l => defaultLine(s, l, mem));
+        if (!lines) lines = [{ d: name ? 'فاتورة ' + (s === 'P' ? 'مشتريات من ' : 'مبيعات إلى ') + name : 'فاتورة', q: 1, p: net, net, vat, sum: true }];
+        inv.lines = lines.map(l => defaultLine(s, l, mem, s === 'S' && memFor && !l.sum ? memFor('I', itemKey(l)) : null));
         invoices.push(inv);
       }
     }
@@ -195,7 +201,7 @@
       const line = { d: String(r[11] || ''), code: String(r[12] == null ? '' : r[12]), unit: String(r[15] || ''), p: num(r[16]), q: num(r[18]) || 1, net: num(r[21]) || num(r[19]) - num(r[20]), vat: num(r[22]), rate: r[17] === '' || r[17] == null ? null : num(r[17]) };
       if (s === 'S') { if (N === 3 || N === 4) line.n = N === 4 ? 'S' : 'G'; if (O) line.o = O; }
       else if (O) line.o = O;
-      inv.lines.push(defaultLine(s, line, memFor ? memFor(s, inv.reg || inv.name) : null));
+      inv.lines.push(defaultLine(s, line, memFor ? memFor(s, inv.reg || inv.name) : null, s === 'S' && memFor && line.n == null ? memFor('I', itemKey(line)) : null));
     }
     return { kind: 'template', invoices, skipped: 0, notes };
   }
@@ -484,7 +490,7 @@
     return { rows, periodOk, ok: periodOk && rows.every(r => r.ok || (typed && !r.strict && !r.isCount)) };
   }
 
-  const API = { normNo, ID_LIMIT, isExp, vatLines, inReturn, r2, r5, num, toLatin, isoDate, dotDate, periodBounds, quarterEnd, snapRate, defaultLine, invKey, invTotals, isServiceText, readWorkbook, issues, cleanNo,
+  const API = { normNo, ID_LIMIT, isExp, vatLines, inReturn, r2, r5, num, toLatin, isoDate, dotDate, periodBounds, quarterEnd, snapRate, defaultLine, invKey, invTotals, isServiceText, serviceWord, itemKey, readWorkbook, issues, cleanNo,
     RATE_ROWS, IN_ROWS, compute, breakdown, lineKind, BR_S, BR_P, uploadSheet, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, parseFormFields, reconcile, VALID_REG, norm };
   if (typeof module === 'object' && module.exports) module.exports = API; else root.OFVatCore = API;
 })(typeof window !== 'undefined' ? window : this);

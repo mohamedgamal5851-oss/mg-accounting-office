@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-27 13:13">
+<meta name="of-build" content="2026-11-27 13:25">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -153,6 +153,10 @@ label.inl input.hin { width: 130px; }
 .hsup { max-height: 380px; overflow: auto; } .hsup select { padding: 4px 6px; font-size: 13px; } .hsup tr.hexp td { color: var(--muted); }
 .hval td, .hval th { padding-inline: 8px; } .hval tr.hv-top td { border-bottom: 0; } .hval tr.hv-sub td { color: var(--muted); font-size: 12.5px; padding-top: 0; }
 td.cell-bad { background: var(--crit-soft); color: var(--crit); font-weight: 600; }
+.ns-top { display: flex; flex-wrap: wrap; gap: 28px; padding: 4px 0 12px; } .ns-top > div { display: flex; flex-direction: column; gap: 4px; }
+.ns-top small { color: var(--muted); font-size: 12px; } .ns-top b { font-variant-numeric: tabular-nums; } .ns-top label { display: flex; align-items: center; gap: 8px; } .ns-top input.hin { width: 140px; }
+.ns-list { max-height: 50vh; overflow: auto; } .ns-list select { padding: 4px 6px; } tr.ns-hit td { background: var(--warn-soft); } tr.ns-hit td:first-child { box-shadow: inset -3px 0 0 var(--gold); }
+.ns-sug-note .btn { margin-inline-start: 8px; }
 .to-mods { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 2px 8px 2px 4px; margin-inline-start: -8px; transition: background .2s, color .2s; }
 .to-mods:hover, .to-mods:focus-visible { background: var(--accent-soft); color: var(--accent); }
 .to-mods-ic { display: inline-grid; place-items: center; width: 0; overflow: hidden; opacity: 0; transition: width .2s, opacity .2s; }
