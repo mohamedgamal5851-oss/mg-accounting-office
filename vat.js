@@ -1812,7 +1812,9 @@
     });
     // previous credit and the credit carried forward do not add up across periods
     const foot = ['الإجمالي'].concat(new Array(L - 1).fill(''), CL.map(([k, , n, sum], i) => n && sum ? V.r2(rows.reduce((a, r) => a + (Number(r[L + i]) || 0), 0)) : ''));
-    return { cols, groups, rows, foot, pending, freeze: L };
+    // a column with nothing in it (all zeros or empty) is left out; the status and the attachment always show
+    const keep = (c, i) => i < L || c.id === 'st' || c.id === 'att' || rows.some(r => c.n ? Number(r[i]) : r[i] !== '' && r[i] != null);
+    return A.dropCols({ cols, groups, rows, foot, pending, freeze: L }, keep);
   }
   function repData(key) {
     const col = A.col;
