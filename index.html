@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-27 21:28">
+<meta name="of-build" content="2026-11-27 21:34">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <!-- the program on a phone: added to the home screen it opens like an app -->
@@ -14,6 +14,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="مكتب MG">
+<!-- the look: light (ivory, navy and gold) unless this device was set to follow its own light or dark mode -->
+<script>try { if (localStorage.getItem('of-theme') !== 'auto') document.documentElement.setAttribute('data-theme', 'light'); } catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&family=Roboto:wght@400&display=swap" rel="stylesheet">
@@ -548,7 +550,7 @@ a.hv-ns:hover { text-decoration: underline; }
 .side-edge { display: none; position: fixed; inset-block: 0; inset-inline-start: 0; width: 6px; z-index: 38; }
 @media (hover: hover) { .app.floating .side-edge { display: block; } }
 .side-scrim { display: none; position: fixed; inset: 0; background: rgba(10,10,10,.35); z-index: 39; }
-.side.open + .side-scrim { display: block; }
+.side.open ~ .side-scrim { display: block; }
 @media (max-width: 900px) {
   .pin-btn { display: none !important; }
   .app { grid-template-columns: 1fr; }
@@ -701,6 +703,12 @@ a.hv-ns:hover { text-decoration: underline; }
 .dlist a span { flex: 1; } .dlist a small { color: var(--muted); font-size: 12px; } .dlist a b { font-variant-numeric: tabular-nums; }
 .drawer footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); background: var(--bg); }
 @media (prefers-reduced-motion: reduce) { .kpi .meter i, .vbars i, .hbar2 i, .cmdk-box, .cmdk-scrim, .drawer, .drawer-scrim, #main.page-enter .content > * { animation: none !important; } }
+/* the menu on a narrow screen opens from the side, full height */
+@media (max-width: 900px) { .app .side { height: auto; inset-block: 0; border-bottom: 0; } .app .side .logo strong { color: #fff; } }
+.theme-sw { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.theme-sw button { border: 0; background: transparent; padding: 7px 16px; font: inherit; cursor: pointer; color: var(--muted); }
+.theme-sw button.on { background: var(--brand); color: #fff; font-weight: 600; }
+.side .foot .theme-link { background: transparent; border: 1px solid rgba(255,255,255,.2); color: #C9D2DF; border-radius: 8px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 12.5px; }
 /* ---------- phone: a bar at the bottom, rows as cards, call and WhatsApp ---------- */
 .tabbar { display: none; }
 .contact { display: inline-flex; gap: 6px; margin-inline-start: 10px; vertical-align: middle; flex-wrap: wrap; }
@@ -711,9 +719,9 @@ a.hv-ns:hover { text-decoration: underline; }
   body:has(.tabbar:not(:empty)) { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
   .tabbar:empty { display: none !important; }
   .tabbar { display: flex; position: fixed; inset-inline: 0; bottom: 0; z-index: 35; background: var(--surface); border-top: 1px solid var(--line); padding: 2px 4px calc(2px + env(safe-area-inset-bottom)); align-items: flex-end; box-shadow: 0 -4px 16px rgba(19,41,75,.06); }
-  .tabbar a { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 2px 5px; color: var(--muted); text-decoration: none; font-size: 11px; font-weight: 500; position: relative; min-height: 52px; -webkit-tap-highlight-color: transparent; }
-  .tabbar a svg { width: 23px; height: 23px; }
-  .tabbar a.on { color: var(--brand); font-weight: 700; }
+  .tabbar a, .tabbar .tb-more { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 0 5px; color: var(--muted); text-decoration: none; font: inherit; font-size: 10.5px; font-weight: 500; position: relative; min-height: 52px; white-space: nowrap; background: none; border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .tabbar a svg, .tabbar .tb-more svg { width: 22px; height: 22px; }
+  .tabbar a.on { color: var(--ink); font-weight: 700; }
   .tabbar a.on::before { content: ''; position: absolute; top: -3px; width: 26px; height: 3px; border-radius: 0 0 3px 3px; background: var(--gold); }
   .tb-badge { position: absolute; top: 2px; left: calc(50% + 5px); background: var(--crit); color: #fff; font-style: normal; font-size: 10px; font-weight: 700; min-width: 17px; height: 17px; line-height: 17px; border-radius: 9px; padding: 0 4px; text-align: center; }
   .tb-new { flex: none; width: 52px; height: 52px; margin: 0 2px 6px; border-radius: 50%; border: 0; background: var(--gold); color: #fff; font-size: 30px; font-weight: 400; display: grid; place-items: center; box-shadow: 0 6px 16px rgba(166,130,74,.45); transform: translateY(-12px); cursor: pointer; -webkit-tap-highlight-color: transparent; }

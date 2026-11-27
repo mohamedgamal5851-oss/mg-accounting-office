@@ -99,6 +99,7 @@
     apps: '<rect x="4" y="4" width="6" height="6" rx="1.2"/><rect x="14" y="4" width="6" height="6" rx="1.2"/><rect x="4" y="14" width="6" height="6" rx="1.2"/><rect x="14" y="14" width="6" height="6" rx="1.2"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
     phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
+    more: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     chat: '<path d="M4 20l1.4-4.2A8 8 0 1 1 8.6 19z"/>',
     setup: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'
   };
@@ -146,7 +147,7 @@
     }
     // wide screens: the menu is a bar across the top; narrow screens: it opens from the «القائمة» button
     $('#app').classList.remove('floating'); $('#side').classList.remove('open');
-    $('#side-foot').innerHTML = '<button type="button" class="pin-btn" id="pin-btn">' + (pinned ? '⇥ إخفاء القائمة' : '📌 تثبيت القائمة') + '</button><span id="as-of"></span>';
+    $('#side-foot').innerHTML = '<button type="button" class="pin-btn" id="pin-btn">' + (pinned ? '⇥ إخفاء القائمة' : '📌 تثبيت القائمة') + '</button><button type="button" class="theme-link" data-act="theme" data-v="' + (themeMode() === 'auto' ? 'light' : 'auto') + '">المظهر: ' + (themeMode() === 'auto' ? 'حسب الجهاز' : 'فاتح') + '</button><span id="as-of"></span>';
     $('#pin-btn').onclick = () => { pinned = !pinned; try { localStorage.setItem('of-pinned', pinned ? '1' : '0'); } catch (e) {} renderShell(); };
     $('#side-scrim').onclick = () => $('#side').classList.remove('open');
     // the hidden menu opens from the screen edge only when the pointer rests there (0.6 s), not when it passes by
@@ -259,9 +260,12 @@
     const tb = $('#tabbar'); if (!tb) return;
     const page = cp.page, sub = cp.sub || '';
     const items = [['dashboard', 'الرئيسية', 'dashboard', page === 'dashboard' || page === 'home', 0], ['clients', 'العملاء', 'clients', page === 'clients' || page === 'client', 0],
-      ['+'], ['vat-due', 'الضريبة', 'vat-due', page === 'vat' && /^due/.test(sub), badge['vat-due']], ['finance', 'التحصيلات', 'finance', page === 'finance', 0], ['tasks', 'الإجراءات', 'tasks', page === 'tasks', badge.tasks]]
-      .filter(x => x[0] === '+' ? navMenu('new').length : level(x[0] === 'vat-due' ? 'vat' : x[0]) !== 'none');
+      ['vat-due', 'الضريبة', 'vat-due', page === 'vat' && /^due/.test(sub), badge['vat-due']], ['finance', 'التحصيلات', 'finance', page === 'finance', 0], ['tasks', 'الإجراءات', 'tasks', page === 'tasks', badge.tasks]]
+      .filter(x => level(x[0] === 'vat-due' ? 'vat' : x[0]) !== 'none').concat([['more']]);
+    // «+ جديد» sits in the middle, with as many pages on each side
+    if (navMenu('new').length) items.splice(Math.floor(items.length / 2), 0, ['+']);
     tb.innerHTML = items.map(x => x[0] === '+' ? '<button type="button" class="tb-new" data-act="new-menu" data-k="new" aria-haspopup="menu" aria-label="جديد"><span>+</span></button>' :
+      x[0] === 'more' ? '<button type="button" class="tb-more" data-act="menu" aria-label="كل الصفحات">' + svgIcon('more') + '<span>المزيد</span></button>' :
       '<a href="#' + x[0] + '"' + (x[3] ? ' class="on" aria-current="page"' : '') + '>' + svgIcon(x[2]) + '<span>' + esc(x[1]) + '</span>' + (x[4] ? '<i class="tb-badge">' + x[4] + '</i>' : '') + '</a>').join('');
   }
   function renderNav() {
@@ -2371,10 +2375,20 @@
   }
 
   /* ---------------- settings ---------------- */
+  /* the look on this device: light (the program's ivory, navy and gold), or the device's own light or dark mode */
+  function themeMode() { try { return localStorage.getItem('of-theme') === 'auto' ? 'auto' : 'light'; } catch (e) { return 'light'; } }
+  function setTheme(m) {
+    try { localStorage.setItem('of-theme', m); } catch (e) {}
+    if (m === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', 'light');
+    renderShell(); renderPage();
+  }
   function pageSettings() {
     const s = settings(), M = S.M, w = writable();
     const dis = w ? '' : ' disabled';
     let h = topBar('الإعدادات', 'بيانات المكتب والموظفين والخدمات والالتزامات الدورية') + '<div class="content">';
+    h += '<section class="card"><header><h2>مظهر البرنامج</h2><span class="hint">على الجهاز ده بس</span></header><div class="body"><div class="theme-sw">' +
+      [['light', 'فاتح'], ['auto', 'حسب الجهاز (فاتح أو داكن)']].map(([k, l]) => '<button type="button" data-act="theme" data-v="' + k + '"' + (themeMode() === k ? ' class="on"' : '') + '>' + l + '</button>').join('') +
+      '</div><p class="hint" style="margin:8px 0 0">«فاتح» هو شكل البرنامج العادي. «حسب الجهاز» بيخليه داكن لما الموبايل أو الكمبيوتر يكون على الوضع الداكن.</p></div></section>';
     if (!S.settingsSaved && w) h += '<div class="note">هذه هي الإعدادات الافتراضية ولم تُحفظ بعد. راجع بيانات المكتب ومواعيد الالتزامات، ثم اضغط «حفظ» في كل قسم.</div>';
     h += '<section class="card"><header><h2>بيانات المكتب</h2><span class="hint">تظهر في رأس كشوف الحساب والإيصالات والتقارير</span></header><div class="body"><form id="set-office" class="form">' +
       fld('s-name', 'اسم المكتب', inp('s-name', s.officeName, 'text', dis)) + fld('s-sub', 'الوصف المهني', inp('s-sub', s.officeSub, 'text', dis)) +
@@ -2818,6 +2832,7 @@
       const tx = () => S.raw.transactions.find(t => t.id === id);
       switch (a) {
         case 'menu': return $('#side').classList.toggle('open');
+        case 'theme': return setTheme(el.dataset.v === 'auto' ? 'auto' : 'light');
         case 'add-client': return openClientForm(null);
         case 'edit-client': return openClientForm(S.raw.clients.find(c => c.id === id));
         case 'del-client': return deleteClient(id);
