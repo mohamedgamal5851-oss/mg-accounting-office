@@ -251,9 +251,9 @@
 
     // 3) companies × months
     h += '<section class="card"><header><h2>حالة الإقرارات بالشهور · ' + esc(y) + '</h2><span class="grow"></span><span class="vlegend">' +
-      [['matched', 'مطابق'], ['diff', 'فروق'], ['submitted', 'مقدَّم'], ['ready', 'جاهز'], ['draft', 'مسودة'], ['late', 'متأخر لم يُعَدّ']].map(([k, l]) => '<span><i class="hm-' + k + '"></i>' + l + '</span>').join('') + '</span></header><div class="tablewrap"><table class="heat"><thead><tr><th>الشركة</th>' + MSHORT.map(m => '<th>' + m + '</th>').join('') + '</tr></thead><tbody>';
+      [['matched', 'مطابق'], ['diff', 'فروق'], ['submitted', 'مقدَّم'], ['ready', 'جاهز'], ['draft', 'مسودة'], ['late', 'متأخر لم يُعَدّ']].map(([k, l]) => '<span><i class="hm-' + k + '"></i>' + l + '</span>').join('') + '</span></header><div class="tablewrap"><table class="heat"><thead><tr><th>الشركة</th><th>دورية الإقرار</th>' + MSHORT.map(m => '<th>' + m + '</th>').join('') + '</tr></thead><tbody>';
     for (const c of cl) {
-      h += '<tr><td><a href="#vat-list" data-act="vat-pick" data-client="' + c.id + '">' + esc(c.name) + '</a>' + (isQ(c) ? ' <small class="hint">ربع سنوي</small>' : '') + '</td>';
+      h += '<tr><td><a href="#vat-list" data-act="vat-pick" data-client="' + c.id + '">' + esc(c.name) + '</a></td><td class="hm-freq">' + (isQ(c) ? 'ربع سنوي' : 'شهري') + '</td>';
       for (let m = 1; m <= 12; m++) {
         const per = y + '-' + String(m).padStart(2, '0');
         if (isQ(c) && m % 3) { h += '<td class="hm-na"></td>'; continue; }
