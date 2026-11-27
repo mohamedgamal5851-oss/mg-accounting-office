@@ -275,6 +275,37 @@
     return { sales, salesTotal: sT, inputs, inputsTotal: iT, out, inp, due, prev, res, payable: res > 0 ? res : 0, credit: res < 0 ? -res : 0, counts, sFirst, sLast };
   }
 
+  /* ---------- the return by kind (for the summary and the reports) ----------
+     sales: taxable goods, services, table goods (ضريبة الجدول), exempt, zero-rated / export; purchases: taxable and exempt.
+     Credit notes count negative, debit notes positive, so each side adds up to the return's sales and inputs values. */
+  const BR_S = [['sG', 'سلع خاضعة'], ['sS', 'خدمات'], ['sT', 'سلع جدول'], ['sEx', 'معفاة'], ['s0', 'صفر / تصدير']];
+  const BR_P = [['pT', 'خاضعة'], ['pEx', 'معفاة']];
+  function lineKind(inv, l) {
+    if (inv.side === 'P') return l.o === 7 || !Number(l.rate) ? 'pEx' : 'pT';
+    if (l.o === 7) return 'sEx';
+    if (l.o === 2 || !Number(l.rate)) return 's0';
+    const lineTbl = (inv.lines || []).some(x => Number(x.tbl));
+    if (Number(l.tbl) || (!lineTbl && Number(inv.tbl) > 0 && l.n !== 'S')) return 'sT';
+    return l.n === 'S' ? 'sS' : 'sG';
+  }
+  function breakdown(invoices) {
+    const b = { sG: 0, sS: 0, sT: 0, sEx: 0, s0: 0, sVat: 0, sTbl: 0, pT: 0, pEx: 0, pVat: 0 };
+    for (const inv of invoices || []) {
+      if (!inReturn(inv)) continue;
+      const sg = inv.dt === 3 ? -1 : 1;
+      if (inv.side === 'S') {
+        for (const l of inv.lines || []) { b[lineKind(inv, l)] += sg * (Number(l.net) || 0); b.sVat += sg * (Number(l.vat) || 0); }
+        const lt = (inv.lines || []).reduce((a, l) => a + (Number(l.tbl) || 0), 0);
+        b.sTbl += sg * (lt || Number(inv.tbl) || 0);
+      } else {
+        for (const l of vatLines(inv)) { b[lineKind(inv, l)] += sg * (Number(l.net) || 0); b.pVat += sg * (Number(l.vat) || 0); }
+      }
+    }
+    for (const k in b) b[k] = r2(b[k]);
+    b.sAll = r2(b.sG + b.sS + b.sT + b.sEx + b.s0); b.pAll = r2(b.pT + b.pEx);
+    return b;
+  }
+
   /* ---------- upload sheets ---------- */
   const S_HEAD = ['نوع المستند *', 'نوع الضريبة *', 'نوع سلع الجدول *', 'رقم الفاتورة *', 'اسم العميل *', 'رقم التسجيل الضريبي للعميل *', 'رقم الملف الضريبي للعميل', 'العنوان *', 'الرقم القومي / رقم جواز السفر', 'رقم الموبيل', 'تاريخ الفاتورة *', 'إسم المنتج *', 'كود المنتج', 'نوع البيان *', 'نوع السلعة *', 'وحدة قياس المنتج', 'سعر الوحدة *', 'فئة الضريبة *', 'كمية المنتج *', 'المبلغ الإجمالي *', 'قيمة الخصم', 'المبلغ الصافي *', 'قيمة الضريبة *', 'الإجمالي *'];
   const S_CODES = ['DOC_TYP_S', 'TAX_TYP', 'TYP_SCH', 'INVNUM', 'CUST_NAME', 'CUST_REG_NO', 'CUST_FILE_NO', 'ADDRESS', 'ID', 'PHONE', 'DOC_TIN_NUM', 'PROD_NAME', 'PROD_CODE', 'STAT_TYPE_S', 'COMM_TYPE_S', 'PMU', 'UNITP', 'TAX_CAT', 'QOP', 'TAMMOUNT', 'DISC', 'NET_AMM', 'TAX_VAL', 'TOTAL'];
@@ -398,6 +429,6 @@
   }
 
   const API = { normNo, ID_LIMIT, isExp, vatLines, inReturn, r2, r5, num, toLatin, isoDate, dotDate, periodBounds, quarterEnd, snapRate, defaultLine, invKey, invTotals, isServiceText, readWorkbook, issues, cleanNo,
-    RATE_ROWS, IN_ROWS, compute, uploadSheet, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, reconcile, VALID_REG, norm };
+    RATE_ROWS, IN_ROWS, compute, breakdown, lineKind, BR_S, BR_P, uploadSheet, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, reconcile, VALID_REG, norm };
   if (typeof module === 'object' && module.exports) module.exports = API; else root.OFVatCore = API;
 })(typeof window !== 'undefined' ? window : this);

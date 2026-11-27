@@ -1124,7 +1124,9 @@
   }
   function cellHtml(v, c) { return '<td' + (c.n ? ' class="n"' : '') + '>' + (c.n ? (v === '' || v == null ? '' : money(v)) : esc(v == null ? '' : v)) + '</td>'; }
   function tableHtml(rep) {
-    return '<table><thead><tr>' + rep.cols.map(c => '<th' + (c.n ? ' class="n"' : '') + '>' + esc(c.h) + '</th>').join('') + '</tr></thead><tbody>' +
+    // groups: an optional header row above the columns, [label, number of columns] (an empty label leaves the cells blank)
+    const grp = rep.groups ? '<tr class="grp">' + rep.groups.map(([l, n]) => '<th colspan="' + n + '"' + (l ? ' class="g"' : '') + '>' + esc(l) + '</th>').join('') + '</tr>' : '';
+    return '<table' + (rep.groups ? ' class="grouped"' : '') + '><thead>' + grp + '<tr>' + rep.cols.map(c => '<th' + (c.n ? ' class="n"' : '') + '>' + esc(c.h) + '</th>').join('') + '</tr></thead><tbody>' +
       (rep.rows.length ? rep.rows.map(r => '<tr>' + r.map((v, i) => cellHtml(v, rep.cols[i])).join('') + '</tr>').join('') : '<tr><td colspan="' + rep.cols.length + '" class="empty none">لا توجد بيانات</td></tr>') + '</tbody>' +
       (rep.foot && rep.rows.length ? '<tfoot><tr>' + rep.foot.map((v, i) => cellHtml(v, rep.cols[i])).join('') + '</tr></tfoot>' : '') + '</table>';
   }

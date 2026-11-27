@@ -90,7 +90,7 @@
     const rr = Object.assign({}, r, { defAddr: partyDoc(r.client).defAddr });
     let crit = 0; for (const inv of rows) if (V.issues(inv, rr).some(i => i[0] === 'crit')) crit++;
     const outP = rows.filter(i => !i.x && i.date && (i.date < r.from || i.date > r.to)).length, prior = rows.filter(i => !i.x && i.prior).length;
-    return { out: calc.out, inp: calc.inp, due: calc.due, sales: calc.salesTotal.total, inputs: calc.inputsTotal.total, crit, outP, prior,
+    return { out: calc.out, inp: calc.inp, due: calc.due, sales: calc.salesTotal.total, inputs: calc.inputsTotal.total, crit, outP, prior, br: V.breakdown(rows),
       nS: rows.filter(i => i.side === 'S').length, nP: rows.filter(i => i.side === 'P').length };
   }
   /* undo: every change to a return's invoices first keeps a copy of how they were (last 30 steps) */
@@ -667,6 +667,41 @@
     h += '</tbody><tfoot><tr><td>الإجمالي</td><td class="n">' + money(it.loc) + '</td><td class="n">' + money(it.imp) + '</td><td class="n">' + money(it.ap) + '</td><td class="n">' + money(it.am) + '</td><td class="n">' + money(it.total) + '</td><td class="n">' + money(it.tax) + '</td></tr></tfoot></table></div></section>';
     return h;
   }
+  /* the return by kind. Saved with its summary; returns saved before this was added get it once their invoices are read */
+  const BRQ = { q: [], busy: 0, seen: new Set() };
+  function brOf(r) {
+    if (r.sum && r.sum.br) return r.sum.br;
+    const e = VS.cache.get(r.id);
+    if (e && e.loaded) return V.breakdown(e.rows);
+    const m = r.sub && r.sub.src === 'manual' && r.sub.parsed && r.sub.parsed.summary && r.sub.parsed.summary.br;
+    if (m) return m;
+    if (!(r.chunks > 0)) return null;           // no invoices: nothing to split
+    if (!BRQ.seen.has(r.id)) { BRQ.seen.add(r.id); BRQ.q.push(r); pumpBr(); }
+    return undefined;                          // being read
+  }
+  function pumpBr() {
+    while (BRQ.busy < 3 && BRQ.q.length) {
+      const r = BRQ.q.shift(); BRQ.busy++;
+      Promise.resolve(loadRet(r)).then(async (e) => {
+        const cur = retById(r.id);
+        if (e && e.loaded && cur && cur.sum && !cur.sum.br && A.writable()) {
+          try { await S.db.doc('vatReturns/' + r.id).update({ sum: clean(Object.assign({}, cur.sum, { br: V.breakdown(e.rows) })) }); } catch (err) { /* shown from memory until the return is saved */ }
+        }
+      }).catch(() => {}).then(() => { BRQ.busy--; pumpBr(); A.scheduleRender(); });
+    }
+  }
+  function brTables(b) {
+    const cell = (v) => '<td class="n">' + (v ? money(v) : '—') + '</td>';
+    const sK = V.BR_S.filter(([k]) => k !== 's0' || b.s0);
+    const pct = (v, t) => t > 0 && v > 0 ? Math.round(v * 1000 / t) / 10 : 0;
+    const mix = b.sAll > 0 ? '<div class="br-mix" title="توزيع المبيعات">' + sK.map(([k, l], i) => pct(b[k], b.sAll) ? '<i class="br-' + k + '" style="width:' + pct(b[k], b.sAll) + '%" title="' + esc(l + ' ' + pct(b[k], b.sAll) + '%') + '"></i>' : '').join('') + '</div>' : '';
+    return '<div class="br-wrap"><div><table class="br-tbl"><thead><tr><th>المبيعات</th><th class="n">القيمة</th><th class="n">النسبة</th></tr></thead><tbody>' +
+      sK.map(([k, l]) => '<tr><td><i class="br-key br-' + k + '"></i>' + esc(l) + '</td>' + cell(b[k]) + '<td class="n">' + (pct(b[k], b.sAll) ? pct(b[k], b.sAll) + '%' : '') + '</td></tr>').join('') +
+      '</tbody><tfoot><tr><td>إجمالي المبيعات</td>' + cell(b.sAll) + '<td></td></tr><tr><td>ضريبة المبيعات</td>' + cell(b.sVat) + '<td></td></tr>' + (b.sTbl ? '<tr><td>ضريبة الجدول</td>' + cell(b.sTbl) + '<td></td></tr>' : '') + '</tfoot></table>' + mix + '</div>' +
+      '<div><table class="br-tbl"><thead><tr><th>المشتريات</th><th class="n">القيمة</th><th class="n">النسبة</th></tr></thead><tbody>' +
+      V.BR_P.map(([k, l]) => '<tr><td>' + esc(l) + '</td>' + cell(b[k]) + '<td class="n">' + (pct(b[k], b.pAll) ? pct(b[k], b.pAll) + '%' : '') + '</td></tr>').join('') +
+      '</tbody><tfoot><tr><td>إجمالي المشتريات</td>' + cell(b.pAll) + '<td></td></tr><tr><td>ضريبة المدخلات</td>' + cell(b.pVat) + '<td></td></tr></tfoot></table></div></div>';
+  }
   function summaryTab(r, rows, calc, crit) {
     const prevAuto = r.prevMode !== 'manual', p = prevReturn(r);
     let h = '';
@@ -681,6 +716,7 @@
     if (A.writable()) h += '<div class="toolbar"><label class="inl">الرصيد الدائن السابق <input type="number" step="0.01" min="0" id="vat-prev" value="' + esc(calc.prev) + '" style="width:140px"></label>' +
       (prevAuto ? '<span class="hint">' + (p ? 'يتغير تلقائيًا مع الإقرار السابق، وإذا أدخلت رقمًا هنا يُثبَّت.' : 'لا يوجد إقرار سابق مسجل؛ أدخل الرصيد الافتتاحي.') + '</span>' : '<button type="button" class="btn sm" data-act="vat-prev-auto" data-id="' + r.id + '">إعادته إلى الحساب التلقائي</button>') + '</div>';
     h += payCard(r);
+    if (rows.length) h += '<section class="card"><header><h2>المبيعات والمشتريات حسب النوع</h2><span class="hint">قيم صافية بعد إشعارات الإضافة والخصم · المصروفات خارج الإقرار</span></header><div class="body">' + brTables(V.breakdown(rows)) + '</div></section>';
     h += form10(calc);
     const k = calc.counts;
     h += '<section class="card"><header><h2>المستندات</h2></header><div class="body"><div class="kv">' +
@@ -1194,7 +1230,7 @@
       (r.sub ? '<span><b>رقم الإقرار:</b> ' + esc(r.sub.formNo || '—') + '</span><span><b>تاريخ التقديم:</b> ' + esc(r.sub.sentDate || '—') + '</span>' : '') + '</div>';
     const sumBox = '<div class="summary"><div><small>ضريبة المبيعات (1)</small><b>' + money(calc.out) + '</b></div><div><small>ضريبة المدخلات (2)</small><b>' + money(calc.inp) + '</b></div><div><small>المستحقة (1)−(2)</small><b>' + money(calc.due) + '</b></div><div><small>الرصيد الدائن السابق</small><b>' + money(calc.prev) + '</b></div><div><small>' + (calc.res > 0 ? 'مستحق السداد' : 'رصيد دائن مرحّل') + '</small><b>' + money(Math.abs(calc.res)) + '</b></div></div>';
     const strip = (html) => html.replace(/<section class="card"><header><h2>/g, '<h2>').replace(/<\/h2><span class="hint">[^<]*<\/span><\/header><div class="tablewrap">/g, '</h2>').replace(/<\/table><\/div><\/section>/g, '</table>');
-    const inner = A.pdfHead('إقرار ضريبة القيمة المضافة (نموذج 10)', periodLabel(r) + (r.kind === 'amended' ? ' · معدل' : '')) + box + sumBox + strip(form10(calc)) +
+    const inner = A.pdfHead('إقرار ضريبة القيمة المضافة (نموذج 10)', periodLabel(r) + (r.kind === 'amended' ? ' · معدل' : '')) + box + sumBox + '<h2>المبيعات والمشتريات حسب النوع</h2>' + brTables(V.breakdown(e.rows)) + strip(form10(calc)) +
       '<p class="foot-note">عدد فواتير المبيعات ' + int(calc.counts.sInv + calc.counts.sOther) + ' · فواتير الشراء ' + int(calc.counts.pInv) + ' · أذون الإفراج ' + int(calc.counts.pRelease) + '</p>';
     A.makePdf(A.fileName('إقرار قيمة مضافة ' + (c.name || '') + ' ' + r.period) + '.pdf', inner, true);
   }
@@ -1207,6 +1243,34 @@
   }
   const firstPer = (cid) => rets().filter(r => r.client === cid).map(r => r.period).sort()[0] || '9999';
   const SHORT = { draft: 'مسودة', ready: 'جاهز', submitted: 'مقدَّم', matched: '✓ مطابق', diff: '✗ فروق' };
+  /* rows of returns with sales and purchases split by kind. list: [{ lead: [label cells], r: return or null, note }] */
+  const BRL = Object.fromEntries(V.BR_S.concat(V.BR_P));
+  function brReport(leadCols, list) {
+    const col = A.col; let pending = 0;
+    const recs = list.map(x => {
+      if (!x.r) return x;
+      const s = x.r.sum || {}, prev = prevCredit(x.r), res = V.r2((s.due || 0) - prev), b = brOf(x.r);
+      if (b === undefined) pending++;
+      return Object.assign({ s, prev, res, b: b || null }, x);
+    });
+    const any0 = recs.some(x => x.b && x.b.s0), anyT = recs.some(x => x.b && x.b.sTbl);
+    const sK = V.BR_S.filter(([k]) => k !== 's0' || any0);
+    const cols = leadCols.concat(sK.map(([, l]) => col(l, 1)), [col('ض. المبيعات', 1)], anyT ? [col('ض. الجدول', 1)] : [], V.BR_P.map(([, l]) => col(l, 1)),
+      [col('ض. المدخلات', 1), col('المستحقة', 1), col('الرصيد السابق', 1), col('مستحق السداد', 1), col('رصيد دائن مرحّل', 1), col('الحالة'), col('التقديم')]);
+    const groups = [['', leadCols.length], ['المبيعات', sK.length + 1 + (anyT ? 1 : 0)], ['المشتريات', V.BR_P.length + 1], ['نتيجة الإقرار', 4], ['', 2]];
+    const nNum = cols.length - leadCols.length - 2, tot = new Array(nNum).fill(0);
+    const rows = recs.map(x => {
+      if (!x.r) return x.lead.concat(new Array(nNum).fill(''), [x.note || '', '']);
+      const b = x.b, s = x.s, v = (k) => b ? b[k] || 0 : '';
+      const nums = sK.map(([k]) => v(k)).concat([s.out || 0], anyT ? [v('sTbl')] : [], V.BR_P.map(([k]) => v(k)), [s.inp || 0, s.due || 0, x.prev, x.res > 0 ? x.res : '', x.res < 0 ? -x.res : '']);
+      nums.forEach((n, i) => { tot[i] += Number(n) || 0; });
+      return x.lead.concat(nums, [SHORT[statusOf(x.r)], x.r.sub ? [x.r.sub.formNo, x.r.sub.sentDate].filter(Boolean).join(' · ') : '']);
+    });
+    // previous credit and the credit carried forward do not add up across periods
+    tot[nNum - 4] = ''; tot[nNum - 1] = '';
+    const foot = ['الإجمالي'].concat(new Array(leadCols.length - 1).fill(''), tot.map(n => n === '' ? '' : V.r2(n)), ['', '']);
+    return { cols, groups, rows, foot, pending };
+  }
   function repData(key) {
     const col = A.col;
     if (key === 'due') return dueRep();
@@ -1227,21 +1291,14 @@
         });
         return { title: 'حالة إقرارات القيمة المضافة بالشهور', ctx: 'سنة ' + y + ' · ' + int(rows.length) + ' شركة', landscape: true, cols: [col('الشركة'), col('الدورية')].concat(A.MONTHS.map(m => col(m))), rows };
       }
-      const c = client(ui.rmClient) || {}, q = A.lawOf(c) === '6-2025';
-      const rows = [], t = [0, 0, 0, 0, 0, 0, 0];
+      const c = client(ui.rmClient) || {}, q = A.lawOf(c) === '6-2025', list = [];
       A.MONTHS.forEach((m, i) => {
         if (q && (i + 1) % 3) return;
         const per = y + '-' + String(i + 1).padStart(2, '0'), r = retFor(ui.rmClient, per);
-        const label = q ? 'الربع المنتهي ' + m : m;
-        if (!r) { rows.push([label, '', '', '', '', '', '', '', '', per < S.M.ym && per > firstPer(ui.rmClient) ? 'لم يُعَدّ' : '', '', '']); return; }
-        const s = r.sum || {}, prev = prevCredit(r), res = V.r2((s.due || 0) - prev);
-        rows.push([label + (r.kind === 'amended' ? ' (معدل)' : ''), s.sales || 0, s.out || 0, s.inputs || 0, s.inp || 0, s.due || 0, prev, res > 0 ? res : '', res < 0 ? -res : '', STATUS[statusOf(r)][0], r.sub ? r.sub.formNo || '' : '', r.sub ? r.sub.sentDate || '' : '']);
-        t[0] += s.sales || 0; t[1] += s.out || 0; t[2] += s.inputs || 0; t[3] += s.inp || 0; t[4] += s.due || 0; if (res > 0) t[5] += res;
+        list.push({ lead: [(q ? 'الربع المنتهي ' + m : m) + (r && r.kind === 'amended' ? ' (معدل)' : '')], r, note: !r && per < S.M.ym && per > firstPer(ui.rmClient) ? 'لم يُعَدّ' : '' });
       });
-      const last = rows.filter(x => x[1] !== '').pop();
-      return { title: 'ملخص إقرارات القيمة المضافة بالشهور', ctx: (c.name || '') + ' · سنة ' + y + (q ? ' · ربع سنوي' : ' · شهري'), landscape: true,
-        cols: [col(q ? 'الربع' : 'الشهر'), col('المبيعات', 1), col('ضريبة المبيعات', 1), col('المدخلات', 1), col('ضريبة المدخلات', 1), col('المستحقة', 1), col('الرصيد الدائن السابق', 1), col('مستحق السداد', 1), col('رصيد دائن مرحّل', 1), col('الحالة'), col('رقم الإقرار'), col('تاريخ التقديم')],
-        rows, foot: ['إجمالي السنة', t[0], t[1], t[2], t[3], t[4], '', t[5], last ? last[8] : '', '', '', ''] };
+      const b = brReport([col(q ? 'الربع' : 'الشهر')], list);
+      return Object.assign(b, { title: 'ملخص إقرارات القيمة المضافة بالشهور', ctx: (c.name || '') + ' · سنة ' + y + (q ? ' · ربع سنوي' : ' · شهري'), landscape: true });
     }
     if (key === 'credit') {
       const rows = [];
@@ -1257,31 +1314,34 @@
     }
     if (key === 'books') {
       const side = ui.rbSide === 'P' ? 'P' : 'S';
-      const cols = [col('التاريخ'), col('الإقرار'), col('نوع المستند'), col('الرقم'), col(side === 'S' ? 'العميل' : 'المورد'), col('التسجيل / القومي'), col(side === 'S' ? 'سلعة / خدمة' : 'نوع السلعة')]
-        .concat(side === 'P' ? [col('الاستخدام')] : []).concat([col('الصافي', 1), col('الضريبة', 1), col('الإجمالي', 1)]).concat(side === 'P' ? [col('خصم وإضافة', 1)] : []);
+      const cols = [col('التاريخ'), col('الإقرار'), col('نوع المستند'), col('الرقم'), col(side === 'S' ? 'العميل' : 'المورد'), col('التسجيل / القومي'), col(side === 'S' ? 'التصنيف' : 'نوع السلعة')]
+        .concat(side === 'P' ? [col('الاستخدام'), col('التصنيف')] : []).concat([col('الصافي', 1), col('الضريبة', 1), col('الإجمالي', 1)]).concat(side === 'P' ? [col('خصم وإضافة', 1)] : []);
       const out = { title: side === 'S' ? 'دفتر المبيعات' : 'دفتر المشتريات والمصروفات', ctx: (A.clientName(ui.rbClient) || '') + ' · ' + (ui.rbFrom || 'البداية') + ' ← ' + (ui.rbTo || 'اليوم'), cols, rows: [], landscape: true, pending: 0 };
       if (!ui.rbClient) { out.needClient = true; return out; }
       const list = rets().filter(r => r.client === ui.rbClient && (!ui.rbFrom || r.to >= ui.rbFrom) && (!ui.rbTo || r.from <= ui.rbTo)).sort((a, b) => a.period.localeCompare(b.period));
-      const t = [0, 0, 0, 0];
+      const t = [0, 0, 0, 0], byKind = new Map();
+      const addKind = (k, net, vat) => { const x = byKind.get(k) || [0, 0]; x[0] += net; x[1] += vat; byKind.set(k, x); };
       for (const r of list) {
         const e = VS.cache.get(r.id); if (!e || !e.loaded) { out.pending++; loadRet(r); continue; }
         for (const inv of e.rows.filter(i => i.side === side && !i.x && (!ui.rbFrom || i.date >= ui.rbFrom) && (!ui.rbTo || i.date <= ui.rbTo)).sort((a, b) => a.date.localeCompare(b.date))) {
           const sg = inv.dt === 3 ? -1 : 1, tt = V.invTotals(inv);
-          const kinds = Array.from(new Set(inv.lines.map(l => side === 'S' ? (l.n === 'S' ? 'خدمة' : 'سلعة') : (P_O.find(x => x[0] === l.o) || ['', ''])[1]))).join(' + ');
+          const cat = (ls) => Array.from(new Set(ls.map(l => BRL[V.lineKind(inv, l)]))).join(' + ');
+          for (const l of inv.lines) addKind(side === 'P' && l.e ? 'exp' : V.lineKind(inv, l), sg * (Number(l.net) || 0), sg * (Number(l.vat) || 0));
+          const kinds = side === 'S' ? cat(inv.lines) : Array.from(new Set(inv.lines.map(l => (P_O.find(x => x[0] === l.o) || ['', ''])[1]))).join(' + ');
           const use = side === 'P' ? (inv.lines.every(l => l.e) ? 'مصروفات' : inv.lines.some(l => l.e) ? 'مختلط' : 'مشتريات') : null;
-          const row = [inv.date, periodLabel(r), dtLabel(side, inv.dt), inv.no, inv.name, isConsumer(inv) ? inv.nid || '' : inv.reg || '', kinds].concat(side === 'P' ? [use] : []).concat([sg * tt.net, sg * tt.vat, sg * tt.total]).concat(side === 'P' ? [Number(inv.wht) || ''] : []);
+          const row = [inv.date, periodLabel(r), dtLabel(side, inv.dt), inv.no, inv.name, isConsumer(inv) ? inv.nid || '' : inv.reg || '', kinds].concat(side === 'P' ? [use, cat(inv.lines.filter(l => !l.e)) || '—'] : []).concat([sg * tt.net, sg * tt.vat, sg * tt.total]).concat(side === 'P' ? [Number(inv.wht) || ''] : []);
           out.rows.push(row); t[0] += sg * tt.net; t[1] += sg * tt.vat; t[2] += sg * tt.total; t[3] += Number(inv.wht) || 0;
         }
       }
-      out.foot = ['الإجمالي', '', '', '', '', '', ''].concat(side === 'P' ? [''] : []).concat([t[0], t[1], t[2]]).concat(side === 'P' ? [t[3]] : []);
+      out.foot = ['الإجمالي', '', '', '', '', '', ''].concat(side === 'P' ? ['', ''] : []).concat([t[0], t[1], t[2]]).concat(side === 'P' ? [t[3]] : []);
+      const kinds = (side === 'S' ? V.BR_S : V.BR_P.concat([['exp', 'مصروفات (خارج الإقرار)']])).filter(([k]) => byKind.has(k));
+      out.extra = { title: 'الإجمالي حسب التصنيف', cols: [col('التصنيف'), col('الصافي', 1), col('الضريبة', 1), col('الإجمالي', 1)],
+        rows: kinds.map(([k, l]) => { const x = byKind.get(k); return [l, V.r2(x[0]), V.r2(x[1]), V.r2(x[0] + x[1])]; }), foot: ['الإجمالي', V.r2(t[0]), V.r2(t[1]), V.r2(t[2])] };
       return out;
     }
     const list = rets().filter(r => (!ui.rsYear || r.period.startsWith(ui.rsYear)) && (!ui.rbClient || r.client === ui.rbClient)).sort((a, b) => a.period.localeCompare(b.period) || A.clientName(a.client).localeCompare(A.clientName(b.client), 'ar'));
-    const rows = list.map(r => { const s = r.sum || {}, prev = prevCredit(r), res = V.r2((s.due || 0) - prev); return [A.clientName(r.client), periodLabel(r), r.kind === 'amended' ? 'معدل' : 'أصلي', s.sales || 0, s.out || 0, s.inputs || 0, s.inp || 0, s.due || 0, prev, res > 0 ? res : '', res < 0 ? -res : '', STATUS[statusOf(r)][0], r.sub ? r.sub.formNo || '' : '', r.sub ? r.sub.sentDate || '' : '']; });
-    const sum = (i) => rows.reduce((s, r) => s + (Number(r[i]) || 0), 0);
-    return { title: 'ملخص إقرارات القيمة المضافة', ctx: (ui.rsYear || 'جميع السنوات') + (ui.rbClient ? ' · ' + A.clientName(ui.rbClient) : ''), landscape: true,
-      cols: [col('الشركة'), col('الفترة'), col('النوع'), col('المبيعات', 1), col('ضريبة المبيعات', 1), col('المدخلات', 1), col('ضريبة المدخلات', 1), col('المستحقة', 1), col('الرصيد السابق', 1), col('مستحق السداد', 1), col('رصيد دائن', 1), col('الحالة'), col('رقم الإقرار'), col('تاريخ التقديم')],
-      rows, foot: ['الإجمالي', '', '', sum(3), sum(4), sum(5), sum(6), sum(7), '', sum(9), '', '', '', ''] };
+    const b = brReport([col('الشركة'), col('الفترة')], list.map(r => ({ lead: [A.clientName(r.client), periodLabel(r) + (r.kind === 'amended' ? ' (معدل)' : '')], r })));
+    return Object.assign(b, { title: 'ملخص إقرارات القيمة المضافة', ctx: (ui.rsYear || 'جميع السنوات') + (ui.rbClient ? ' · ' + A.clientName(ui.rbClient) : ''), landscape: true });
   }
   function pageReports(key) {
     if (!REPS.some(x => x[0] === key)) key = 'months';
@@ -1298,11 +1358,13 @@
     if (key === 'summary') f = '<select data-ui="rsYear">' + options(years, ui.rsYear, 'جميع السنوات') + '</select><select data-ui="rbClient">' + options(A.clientOptions(true), ui.rbClient, 'جميع الشركات') + '</select>';
     if (key === 'books') f = '<select data-ui="rbClient">' + options(A.clientOptions(true), ui.rbClient, 'اختر الشركة…') + '</select><select data-ui="rbSide">' + options([['S', 'دفتر المبيعات'], ['P', 'دفتر المشتريات والمصروفات']], ui.rbSide) + '</select>' +
       '<label class="inl">من <input type="date" data-ui="rbFrom" value="' + esc(ui.rbFrom) + '"></label><label class="inl">إلى <input type="date" data-ui="rbTo" value="' + esc(ui.rbTo) + '"></label>';
-    const canExp = S.downloads && !rep.needClient && !rep.pending;
+    const canExp = S.downloads && !rep.needClient && !(rep.pending && key === 'books');
     h += '<div class="toolbar">' + f + '<span class="grow"></span>' + (canExp ? '<button type="button" class="btn" data-act="vat-rep-pdf" data-key="' + key + '">⤓ PDF</button><button type="button" class="btn" data-act="vat-rep-xlsx" data-key="' + key + '">⤓ Excel</button>' : '') + '</div>';
     if (rep.needClient) return h + '<div class="card"><div class="empty">اختر الشركة لعرض الدفتر.</div></div></div>';
-    if (rep.pending) return h + '<div class="loading">جارٍ تحميل فواتير ' + int(rep.pending) + ' إقرار…</div></div>';
-    return h + '<section class="card"><header><h2>' + esc(rep.title) + '</h2><span class="hint">' + esc(rep.ctx || '') + '</span></header><div class="tablewrap">' + A.tableHtml(rep) + '</div></section></div>';
+    if (rep.pending && key === 'books') return h + '<div class="loading">جارٍ تحميل فواتير ' + int(rep.pending) + ' إقرار…</div></div>';
+    if (rep.pending) h += '<div class="note info">جارٍ تجهيز تقسيم المبيعات والمشتريات لـ ' + int(rep.pending) + ' إقرار محفوظ قبل إضافة التقسيم… (مرة واحدة فقط)</div>';
+    return h + '<section class="card"><header><h2>' + esc(rep.title) + '</h2><span class="hint">' + esc(rep.ctx || '') + '</span></header><div class="tablewrap">' + A.tableHtml(rep) + '</div></section>' +
+      (rep.extra ? '<section class="card"><header><h2>' + esc(rep.extra.title) + '</h2></header><div class="tablewrap">' + A.tableHtml(rep.extra) + '</div></section>' : '') + '</div>';
   }
 
   /* ---------------- suppliers / customers memory ---------------- */
@@ -1377,8 +1439,12 @@
           if (ok) { VS.cache.delete(x.id); closeModal(); A.go('vat-list'); toast('تم حذف الإقرار'); }
         });
       }
-      case 'vat-rep-pdf': { const rep = repData(el.dataset.key); return A.makePdf(A.fileName(rep.title + ' ' + (rep.ctx || '')) + '.pdf', A.pdfHead(rep.title, rep.ctx) + A.tableHtml(rep), rep.landscape); }
-      case 'vat-rep-xlsx': { const rep = repData(el.dataset.key); const rows = [rep.cols.map(c => c.h)].concat(rep.rows.map(x => x.map(v => v === '' ? null : v))); if (rep.foot && rep.rows.length) rows.push(rep.foot); return A.xlsxBook(A.fileName(rep.title) + '.xlsx', [{ name: rep.title, ctx: rep.ctx, rows }]); }
+      case 'vat-rep-pdf': { const rep = repData(el.dataset.key); return A.makePdf(A.fileName(rep.title + ' ' + (rep.ctx || '')) + '.pdf', A.pdfHead(rep.title, rep.ctx) + A.tableHtml(rep) + (rep.extra ? '<h2>' + esc(rep.extra.title) + '</h2>' + A.tableHtml(rep.extra) : ''), rep.landscape); }
+      case 'vat-rep-xlsx': {
+        const rep = repData(el.dataset.key);
+        const aoa = (x) => { const rows = (x.groups ? [x.groups.flatMap(([l, n]) => [l || null].concat(new Array(n - 1).fill(null)))] : []).concat([x.cols.map(c => c.h)], x.rows.map(y => y.map(v => v === '' ? null : v))); if (x.foot && x.rows.length) rows.push(x.foot); return rows; };
+        return A.xlsxBook(A.fileName(rep.title) + '.xlsx', [{ name: rep.title, ctx: rep.ctx, rows: aoa(rep) }].concat(rep.extra ? [{ name: rep.extra.title, ctx: rep.ctx, rows: aoa(rep.extra) }] : []));
+      }
     }
   }
 

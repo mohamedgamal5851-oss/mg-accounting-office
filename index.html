@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-27 06:22">
+<meta name="of-build" content="2026-11-27 06:26">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -121,6 +121,19 @@ tr.sub-row td { color: var(--muted); font-size: 13px; } tr.sub-row td:nth-child(
 .pay-card header .pill { margin-inline-start: 8px; }
 .hm-dot, .vlegend i.hm-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--crit); margin-inline-start: 3px; vertical-align: 1px; }
 .hm-paid { font-style: normal; font-size: 10px; margin-inline-start: 2px; color: var(--ok); }
+/* reports with grouped headers, and the return split by kind */
+table.grouped thead tr.grp th { text-align: center; border-bottom: 0; padding-bottom: 2px; }
+table.grouped thead tr.grp th.g { border-bottom: 2px solid var(--accent); color: var(--ink); }
+table.grouped thead tr.grp + tr th { top: 30px; }
+.br-wrap { display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; align-items: start; }
+.br-tbl { width: 100%; } .br-tbl td, .br-tbl th { padding: 6px 10px; } .br-tbl tfoot td { font-weight: 600; }
+.br-key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-inline-end: 6px; vertical-align: -1px; }
+.br-mix { display: flex; height: 10px; border-radius: 99px; overflow: hidden; margin-top: 10px; background: var(--line); }
+.br-mix i { display: block; height: 100%; }
+.br-sG { background: #2f5fa8; } .br-sS { background: #1d7a46; } .br-sT { background: #b25e00; } .br-sEx { background: #9a9a9a; } .br-s0 { background: #6b4fa0; }
+@media (max-width: 900px) { .br-wrap { grid-template-columns: 1fr; } }
+.pdf-doc table.grouped thead tr.grp th { background: #fff; color: #1c1c1c; border-bottom: 1.5px solid #2b2b2b; text-align: center; }
+.pdf-doc .br-wrap { grid-template-columns: 1fr 1fr; gap: 14px; }
 .to-mods { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 2px 8px 2px 4px; margin-inline-start: -8px; transition: background .2s, color .2s; }
 .to-mods:hover, .to-mods:focus-visible { background: var(--accent-soft); color: var(--accent); }
 .to-mods-ic { display: inline-grid; place-items: center; width: 0; overflow: hidden; opacity: 0; transition: width .2s, opacity .2s; }
