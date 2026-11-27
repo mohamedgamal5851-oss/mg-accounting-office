@@ -125,8 +125,11 @@
   }
   function setSaveState(t) { VS.saveText = t; const el = $('#vat-save'); if (el) el.textContent = t; }
   async function saveParties(cid, patch) {
+    // what this session already saved is laid over the stored map, so a second change made before the first comes back is not lost
+    VS.pmap = VS.pmap || {}; const mine = VS.pmap[cid] = VS.pmap[cid] || {};
+    for (const [k, v] of Object.entries(patch)) mine[k] = Object.assign({}, mine[k] || {}, v);
     const d = partyDoc(cid), map = Object.assign({}, d.map || {});
-    for (const [k, v] of Object.entries(patch)) map[k] = Object.assign({}, map[k] || {}, v);
+    for (const [k, v] of Object.entries(mine)) map[k] = Object.assign({}, map[k] || {}, v);
     await write(() => S.db.doc('vatParties/' + cid).set(clean({ client: cid, map, defAddr: d.defAddr || '' })));
   }
   async function allFiles() {
@@ -618,6 +621,25 @@
     rows.forEach((x, i) => { x.hint = histHint(rows, i); });
     return { pers, rows, outside, before };
   }
+  /* the suppliers in the sheets, to sort purchases (in the return) from expenses (outside it, for form 41) */
+  function histSuppliers(h) {
+    const m = new Map();
+    for (const inv of h.invs) {
+      if (inv.side !== 'P' || inv.x || !histPer(h, inv.date)) continue;
+      const k = inv.reg || inv.name, sg = inv.dt === 3 ? -1 : 1;
+      const x = m.get(k) || { k, name: inv.name, reg: inv.reg || '', n: 0, net: 0, vat: 0, e: new Set(), o: new Set() };
+      x.n++;
+      for (const l of inv.lines) { x.net += sg * (Number(l.net) || 0); x.vat += sg * (Number(l.vat) || 0); x.e.add(!!l.e); x.o.add(l.o); }
+      m.set(k, x);
+    }
+    return Array.from(m.values()).sort((a, b) => b.vat - a.vat || b.net - a.net);
+  }
+  function histSetSup(key, f, v) {
+    const h = H(); if (v === '') return;
+    const val = f === 'e' ? v === '1' : Number(v); let name = '';
+    for (const inv of h.invs) if (inv.side === 'P' && (inv.reg || inv.name) === key) { name = inv.name; for (const l of inv.lines) l[f] = val; }
+    saveParties(h.client, { ['P:' + key]: { [f]: val, name } });
+  }
   function histHint(rows, i) {
     const x = rows[i]; if (!x.d || x.ok) return '';
     const d = x.d, nx = rows[i + 1] && rows[i + 1].d, pv = rows[i - 1] && rows[i - 1].d, cancels = (a, b) => b != null && Math.abs(a + b) < 1;
@@ -626,7 +648,13 @@
     if (Math.abs(d.prev) >= 1) out.push('الرصيد السابق مختلف: راجع الفترة اللي قبلها أو الرصيد الافتتاحي');
     if (d.out >= 1) out.push('المقدَّم فيه ضريبة مبيعات أكتر بـ ' + money(d.out) + ': غالبًا مبيعات مستهلك نهائي أو خارج البوابة');
     if (d.out <= -1) out.push('الشيت فيه ضريبة مبيعات أكتر بـ ' + money(-d.out) + ': فواتير اتلغت أو اتسجلت بعد التقديم');
-    if (d.inp <= -1) out.push(cancels(d.inp, nx && nx.inp) ? 'مدخلات ' + money(-d.inp) + ' اتخصمت في إقرار الفترة اللي بعدها' : 'مدخلات في الشيت بـ ' + money(-d.inp) + ' ماتخصمتش في الإقرار');
+    if (d.inp <= -1) {
+      // a supplier whose tax in the period equals the gap was most likely treated as an expense
+      const by = new Map();
+      for (const inv of x.invs) if (inv.side === 'P' && !inv.x) { const k = inv.reg || inv.name, sg = inv.dt === 3 ? -1 : 1; const y = by.get(k) || { name: inv.name, vat: 0 }; for (const l of V.vatLines(inv)) y.vat += sg * (Number(l.vat) || 0); by.set(k, y); }
+      const sup = Array.from(by.values()).find(y => Math.abs(y.vat + d.inp) < 1);
+      out.push(cancels(d.inp, nx && nx.inp) ? 'مدخلات ' + money(-d.inp) + ' اتخصمت في إقرار الفترة اللي بعدها' : sup ? 'غالبًا المورد «' + sup.name + '» اتعامل مصروفات (ضريبته ' + money(sup.vat) + '): غيّره من تصنيف الموردين' : 'مدخلات في الشيت بـ ' + money(-d.inp) + ' ماتخصمتش في الإقرار: راجع تصنيف الموردين (مصروفات) أو اتخصمت لاحقًا');
+    }
     if (d.inp >= 1) out.push(cancels(d.inp, pv && pv.inp) ? 'مدخلات ' + money(d.inp) + ' من الفترة اللي قبلها اتخصمت هنا' : 'المقدَّم فيه مدخلات أكتر بـ ' + money(d.inp) + ': فواتير ورقية أو جمركية مش في البوابة');
     return out.join(' · ');
   }
@@ -644,22 +672,60 @@
     const h = H(), c = client(h.client), w = A.writable();
     let o = topBar('الإقرارات القديمة', 'إضافة إقرارات اتقدمت قبل استخدام البرنامج: من شيتات بوابة الفاتورة الإلكترونية، ومطابقتها مع الإقرارات المقدَّمة', '<a class="btn" href="#vat-list">رجوع للإقرارات</a>') + '<div class="content hist">';
     if (!w) return o + '<div class="card"><div class="empty">هذه الصفحة تحتاج صلاحية التعديل على الإقرارات.</div></div></div>';
-    const step = (n, t, hint, body) => '<section class="card hstep"><header><span class="hnum">' + n + '</span><h2>' + esc(t) + '</h2>' + (hint ? '<span class="hint">' + hint + '</span>' : '') + '</header><div class="body">' + body + '</div></section>';
+    const AR = '١٢٣٤٥٦٧٨٩'; let sn = 0;
+    const step = (n, t, hint, body) => '<section class="card hstep"><header><span class="hnum">' + AR[sn++] + '</span><h2>' + esc(t) + '</h2>' + (hint ? '<span class="hint">' + hint + '</span>' : '') + '</header><div class="body">' + body + '</div></section>';
     const vatCl = S.M.clients.filter(x => x.status !== 'inactive').map(x => [x.id, (x.code ? x.code + ' · ' : '') + x.name]);
-    o += step('١', 'الشركة والفترة', 'كل فترة ليها إقرار في البرنامج هتظهر «موجود» ومش هتتغير', '<div class="form hform">' +
+    o += step('', 'الشركة والفترة', 'كل فترة ليها إقرار في البرنامج هتظهر «موجود» ومش هتتغير', '<div class="form hform">' +
       fld('h-client', 'الشركة', '<select id="h-client" data-h="client">' + options(vatCl, h.client, 'اختر الشركة…') + '</select>') +
       fld('h-freq', 'دورية الإقرارات في الفترة دي', '<select id="h-freq" data-h="freq"' + (c ? '' : ' disabled') + '>' + options([['monthly', 'شهري'], ['quarterly', 'ربع سنوي']], h.freq) + '</select>') +
       fld('h-from', 'من شهر', inp('h-from', h.from, 'month', ' data-h="from"' + (c ? '' : ' disabled'))) + fld('h-to', 'إلى شهر', inp('h-to', h.to, 'month', ' data-h="to"' + (c ? '' : ' disabled'))) + '</div>');
     const m = histModel(h);
     if (!c || !m.pers.length) return o + '</div>';
     const nIn = h.invs.length - m.outside;
-    o += step('٢', 'شيتات بوابة الفاتورة الإلكترونية', 'ارفع ملف الفواتير المرسلة والمستلمة (ممكن أكتر من ملف، ولكل الشهور مرة واحدة)',
+    o += step('', 'شيتات بوابة الفاتورة الإلكترونية', 'ارفع ملف الفواتير المرسلة والمستلمة (ممكن أكتر من ملف، ولكل الشهور مرة واحدة)',
       '<div class="toolbar"><label class="btn primary" for="h-files">⤒ رفع الشيتات</label><input type="file" id="h-files" multiple accept=".xlsx,.xls,.csv" hidden>' +
       (h.files.length ? '<button type="button" class="btn sm" data-act="vat-hist-clear">مسح الشيتات</button>' : '') + '<span class="grow"></span>' +
       (h.files.length ? '<span class="hint">' + h.files.map(f => esc(f.name) + ' (' + int(f.n) + ')').join(' · ') + '</span>' : '') + '</div>' +
       (h.files.length ? '<div class="note info" style="margin-top:10px">' + int(nIn) + ' مستند داخل الفترة اتوزعوا على ' + int(m.rows.filter(x => !x.ex && x.invs.length).length) + ' ' + (h.freq === 'quarterly' ? 'ربع' : 'شهر') + ' حسب تاريخ الإصدار' + (m.outside ? ' · ' + int(m.outside) + ' مستند تاريخه خارج الفترة (مش هيتضاف)' : '') + '</div>' : ''));
 
-    // 3: submitted figures and the match, one row per period
+    // suppliers: purchases or expenses
+    const sup = histSuppliers(h);
+    if (sup.length) {
+      const inR = sup.filter(x => !x.e.has(true)), exp = sup.filter(x => x.e.has(true) && !x.e.has(false));
+      const sum = (arr, f) => arr.reduce((a, x) => a + x[f], 0);
+      o += step('', 'تصنيف الموردين', 'مين مشتريات تدخل الإقرار ومين مصروفات تفضل برّه (لنموذج 41)، والتصنيف بيتحفظ للمرات الجاية',
+        '<div class="hsum"><span>مشتريات: ' + int(inR.length) + ' مورد · ضريبة ' + money(sum(inR, 'vat')) + '</span><span>مصروفات: ' + int(exp.length) + ' مورد · ضريبة ' + money(sum(exp, 'vat')) + '</span></div>' +
+        '<div class="tablewrap hsup"><table class="vat-tbl"><thead><tr><th>المورد</th><th>رقم التسجيل</th><th class="n">الفواتير</th><th class="n">القيمة</th><th class="n">الضريبة</th><th>مشتريات / مصروفات</th><th>نوع السلعة</th></tr></thead><tbody>' +
+        sup.map(x => {
+          const ev = x.e.size > 1 ? '' : x.e.has(true) ? '1' : '0', ov = x.o.size > 1 ? '' : String(Array.from(x.o)[0]);
+          return '<tr class="' + (ev === '1' ? 'hexp' : '') + '"><td>' + esc(x.name) + '</td><td class="num">' + esc(x.reg) + '</td><td class="n">' + int(x.n) + '</td><td class="n">' + money(x.net) + '</td><td class="n">' + money(x.vat) + '</td>' +
+            '<td><select data-hsup="' + esc(x.k) + '" data-f="e">' + (ev === '' ? '<option value="" selected>مختلط</option>' : '') + options([['0', 'مشتريات (في الإقرار)'], ['1', 'مصروفات (برّه الإقرار)']], ev) + '</select></td>' +
+            '<td><select data-hsup="' + esc(x.k) + '" data-f="o"' + (ev === '1' ? ' disabled' : '') + '>' + (ov === '' ? '<option value="" selected>مختلف</option>' : '') + options(P_O.map(([k, l]) => [String(k), l]), ov) + '</select></td></tr>';
+        }).join('') + '</tbody></table></div>');
+    }
+    // sales and purchases by kind, from the sheets, and from the submitted return where its PDF was read
+    {
+      const vr = m.rows.filter(x => !x.ex && x.invs.length);
+      if (vr.length) {
+        const bs = vr.map(x => { const b = V.breakdown(x.invs); let ex = 0; for (const inv of x.invs) if (inv.side === 'P' && !inv.x) for (const l of inv.lines) if (l.e) ex += (inv.dt === 3 ? -1 : 1) * (Number(l.net) || 0); b.exp = V.r2(ex); return b; });
+        const pv = vr.map(x => h.pdf[x.per] && h.pdf[x.per].vals);
+        const any = (k) => bs.some(b => b[k]) || pv.some(v => v && v[k]);
+        const SC = [['sG', 'سلع خاضعة'], ['sS', 'خدمات']].concat(any('sT') ? [['sT', 'سلع جدول']] : [], [['sEx', 'معفاة']], any('s0') ? [['s0', 'صفر / تصدير']] : [], [['sAll', 'الإجمالي'], ['sVat', 'الضريبة']]);
+        const PC = [['pT', 'خاضعة'], ['pEx', 'معفاة'], ['pAll', 'الإجمالي'], ['pVat', 'الضريبة']];
+        const cols = SC.concat(PC, [['exp', 'مصروفات']]);
+        const tot = {}; for (const [k] of cols) tot[k] = bs.reduce((a, b) => a + (b[k] || 0), 0);
+        const cells = (b, ref) => cols.map(([k]) => { const v = b ? b[k] : null, bad = ref && v != null && k !== 'exp' && Math.abs((v || 0) - (ref[k] || 0)) >= 1; return '<td class="n' + (bad ? ' cell-bad' : '') + '">' + (v == null || (k === 'exp' && !b.exp && ref == null) ? '' : v ? money(v) : '—') + '</td>'; }).join('');
+        let t2 = '<table class="vat-tbl grouped hval"><thead><tr class="grp"><th></th><th colspan="' + SC.length + '" class="g">المبيعات</th><th colspan="' + PC.length + '" class="g">المشتريات</th><th></th></tr><tr><th>الفترة</th>' + cols.map(([, l]) => '<th class="n">' + esc(l) + '</th>').join('') + '</tr></thead><tbody>';
+        vr.forEach((x, i) => {
+          const lbl = esc(h.freq === 'quarterly' ? 'الربع المنتهي ' + A.monthLabel(x.per) : A.monthLabel(x.per));
+          t2 += '<tr' + (pv[i] ? ' class="hv-top"' : '') + '><td>' + lbl + (pv[i] ? ' <small class="hint">الشيت</small>' : '') + '</td>' + cells(bs[i], pv[i] ? Object.assign({ exp: 0 }, pv[i]) : null) + '</tr>';
+          if (pv[i]) t2 += '<tr class="hv-sub"><td><small>الإقرار المقدَّم</small></td>' + cols.map(([k]) => '<td class="n">' + (k === 'exp' ? '' : pv[i][k] ? money(pv[i][k]) : '—') + '</td>').join('') + '</tr>';
+        });
+        t2 += '</tbody><tfoot><tr><td>الإجمالي</td>' + cols.map(([k]) => '<td class="n">' + (tot[k] ? money(tot[k]) : '—') + '</td>').join('') + '</tr></tfoot></table>';
+        o += step('', 'المبيعات والمشتريات بالقيمة', 'من الشيتات بعد تصنيف الموردين' + (pv.some(Boolean) ? '، وتحتها أرقام الإقرار المقدَّم (الخانة الحمرا فيها فرق)' : ''), '<div class="tablewrap">' + t2 + '</div>');
+      }
+    }
+    // submitted figures and the match, one row per period
     const z = (v) => v == null || v === '' ? '' : String(v);
     const cell = (per, k, v, ph, type) => '<input id="hf-' + per + '-' + k + '" data-hf="' + per + '|' + k + '" value="' + esc(z(v)) + '"' + (type === 'date' ? ' type="date"' : ' inputmode="decimal"') + (ph != null && ph !== '' ? ' placeholder="' + esc(ph) + '"' : '') + ' class="hin' + (type ? ' h' + type : '') + '">';
     let t = '<table class="vat-tbl grouped hist-tbl"><thead><tr class="grp"><th></th><th colspan="3" class="g">حسب الشيتات</th><th colspan="6" class="g">الإقرار المقدَّم</th><th colspan="2"></th></tr><tr>' +
@@ -682,7 +748,7 @@
     }
     t += '</tbody></table>';
     const showOpen = !m.before;
-    o += step('٣', 'أرقام الإقرارات المقدَّمة والمطابقة', 'اكتبها من الإقرار، أو الصقها من Excel، أو ارفع ملفات الإقرارات PDF',
+    o += step('', 'أرقام الإقرارات المقدَّمة والمطابقة', 'اكتبها من الإقرار، أو الصقها من Excel، أو ارفع ملفات الإقرارات PDF',
       '<div class="toolbar"><label class="btn" for="h-pdfs">⤒ رفع ملفات الإقرارات PDF</label><input type="file" id="h-pdfs" multiple accept=".pdf" hidden><button type="button" class="btn" data-act="vat-hist-paste">📋 لصق من Excel</button>' +
       '<button type="button" class="btn" data-act="vat-hist-copy" title="للفترات الفاضية: اكتب أرقام النظام في خانات المقدَّم">نسخ أرقام النظام للخانات الفاضية</button><span class="grow"></span>' +
       (showOpen ? '<label class="inl">الرصيد الدائن قبل أول فترة <input id="h-open" data-hopen value="' + esc(z(h.opening)) + '" inputmode="decimal" class="hin" placeholder="' + esc(grp(hNum((h.figs[m.pers[0]] || {}).prev) || 0)) + '"></label>' : '<span class="hint">الرصيد السابق لأول فترة من إقرار ' + esc(periodLabel(m.before)) + '</span>') + '</div>' +
@@ -690,7 +756,7 @@
 
     const todo = m.rows.filter(x => !x.ex && (x.invs.length || x.theirs));
     const nOk = todo.filter(x => x.ok).length, nAcc = todo.filter(x => x.theirs && !x.ok && h.accept[x.per]).length, nBad = todo.filter(x => x.theirs && !x.ok && !h.accept[x.per]).length, nNo = todo.filter(x => !x.theirs).length;
-    o += step('٤', 'الحفظ', '', '<div class="hsum"><span class="match-ok">✓ ' + int(nOk) + ' مطابق</span>' + (nAcc ? '<span>' + int(nAcc) + ' فرق مقبول</span>' : '') + (nBad ? '<span class="match-bad">✗ ' + int(nBad) + ' فيه فرق</span>' : '') + (nNo ? '<span class="hint">' + int(nNo) + ' من غير أرقام مقدَّمة</span>' : '') + '</div>' +
+    o += step('', 'الحفظ', '', '<div class="hsum"><span class="match-ok">✓ ' + int(nOk) + ' مطابق</span>' + (nAcc ? '<span>' + int(nAcc) + ' فرق مقبول</span>' : '') + (nBad ? '<span class="match-bad">✗ ' + int(nBad) + ' فيه فرق</span>' : '') + (nNo ? '<span class="hint">' + int(nNo) + ' من غير أرقام مقدَّمة</span>' : '') + '</div>' +
       '<div class="hopts"><label class="inl"><input type="checkbox" data-hopt="paid"' + (h.paid ? ' checked' : '') + '> اعتبار الضريبة المستحقة في الفترات دي مسددة (اتسددت قبل استخدام البرنامج)</label>' +
       '<label class="inl"><input type="checkbox" data-hopt="lock"' + (h.lock ? ' checked' : '') + '> قفل الإقرارات المطابقة والمقبولة من التعديل</label></div>' +
       '<div class="toolbar"><button type="button" class="btn primary" data-act="vat-hist-save"' + (todo.length && !h.busy ? '' : ' disabled') + '>' + (h.busy ? 'جارٍ الحفظ…' : 'حفظ ' + int(todo.length) + ' إقرار') + '</button>' +
@@ -710,6 +776,7 @@
     })));
     const op = $('[data-hopen]'); if (op) op.addEventListener('change', later(() => { h.opening = op.value.trim(); }));
     $$('[data-hacc]').forEach(el => el.addEventListener('change', () => { h.accept[el.dataset.hacc] = el.checked; A.renderPage(); }));
+    $$('[data-hsup]').forEach(el => el.addEventListener('change', () => { histSetSup(el.dataset.hsup, el.dataset.f, el.value); A.renderPage(); }));
     $$('[data-hopt]').forEach(el => el.addEventListener('change', () => { h[el.dataset.hopt] = el.checked; }));
     const fi = $('#h-files'); if (fi) fi.addEventListener('change', async () => { const fs = Array.from(fi.files); fi.value = ''; for (const f of fs) await histSheet(f); A.renderPage(); });
     const pi = $('#h-pdfs'); if (pi) pi.addEventListener('change', async () => { const fs = Array.from(pi.files); pi.value = ''; await histPdfs(fs); A.renderPage(); });
@@ -726,10 +793,8 @@
     toast('«' + file.name + '»: ' + int(n) + ' مستند');
   }
   async function readPdfFigures(file) {
-    const lib = await pdfLib(), bytes = new Uint8Array(await file.arrayBuffer());
-    const doc = await lib.getDocument({ data: bytes.slice() }).promise, pages = [];
-    for (let p = 1; p <= doc.numPages; p++) { const tc = await (await doc.getPage(p)).getTextContent(); pages.push(tc.items.map(i => i.str)); }
-    return { parsed: V.parseReturnPdf(pages), bytes };
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return { parsed: await readReturnPdf(bytes), bytes };
   }
   async function histPdfs(files) {
     const h = H(), pers = histPeriods(h); let got = 0; const miss = [];
@@ -738,10 +803,13 @@
       try {
         const { parsed, bytes } = await readPdfFigures(f), s = parsed.summary;
         const ym = String(parsed.to || '').slice(0, 7), per = ym ? (h.freq === 'quarterly' ? V.quarterEnd(ym) : ym) : '';
+        // a quarterly return read while the wizard is set to monthly (or the reverse) would land on the wrong period
+        const span = parsed.from && parsed.to ? (Number(parsed.to.slice(0, 4)) - Number(parsed.from.slice(0, 4))) * 12 + Number(parsed.to.slice(5, 7)) - Number(parsed.from.slice(5, 7)) + 1 : 0;
+        if (span && span !== (h.freq === 'quarterly' ? 3 : 1)) { miss.push(f.name + ' (' + (span === 3 ? 'ربع سنوي، غيّر الدورية' : 'شهري، غيّر الدورية') + ')'); continue; }
         if (!s || !pers.includes(per)) { miss.push(f.name); continue; }
         const z = (v) => v == null ? '' : String(v);
         h.figs[per] = { out: z(s.out), inp: z(s.inp), prev: z(s.prev), res: z(s.res), no: parsed.formNo || '', date: parsed.sentDate || '' };
-        h.pdf[per] = { name: f.name, bytes }; got++;
+        h.pdf[per] = { name: f.name, bytes, vals: parsed.vals || null, form: parsed.form || 'new' }; got++;
       } catch (e) { miss.push(f.name); }
     }
     toast('اتقرأ ' + int(got) + ' إقرار' + (miss.length ? ' · تعذّر ربط: ' + miss.join('، ') : ''), !!miss.length);
@@ -1383,22 +1451,30 @@
     window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     return window.pdfjsLib;
   }
+  /* a submitted return's PDF: the new portal writes its figures as page text, the old one («GenerateTaxVat») in form fields */
+  async function readReturnPdf(bytes) {
+    const lib = await pdfLib(), doc = await lib.getDocument({ data: bytes.slice() }).promise, pages = [], fields = {};
+    for (let p = 1; p <= doc.numPages; p++) {
+      const pg = await doc.getPage(p);
+      pages.push((await pg.getTextContent()).items.map(i => i.str));
+      try {
+        for (const a of await pg.getAnnotations()) if (a.fieldName && a.fieldValue != null && a.fieldValue !== '' && fields[a.fieldName] == null) fields[a.fieldName] = Array.isArray(a.fieldValue) ? a.fieldValue[0] : a.fieldValue;
+      } catch (e) { /* a page without fields */ }
+    }
+    return V.parseReturnPdf(pages, fields);
+  }
   async function readSubmittedPdf(r, file) {
     toast('جارٍ قراءة الإقرار…');
     let parsed, bytes;
     try {
-      const lib = await pdfLib();
       bytes = new Uint8Array(await file.arrayBuffer());
-      const doc = await lib.getDocument({ data: bytes.slice() }).promise;
-      const pages = [];
-      for (let p = 1; p <= doc.numPages; p++) { const tc = await (await doc.getPage(p)).getTextContent(); pages.push(tc.items.map(i => i.str)); }
-      parsed = V.parseReturnPdf(pages);
+      parsed = await readReturnPdf(bytes);
     } catch (e) { return toast((e && e.message) || 'تعذّر قراءة الملف.', true); }
     if (!parsed.summary && !parsed.formNo) return toast('لم يُعثر على ملخص الضريبة في الملف. تأكد أنه إقرار القيمة المضافة (نموذج 10) الصادر من المنظومة، أو أدخل الملخص يدويًا.', true);
     const keep = Array.from(new Set(parsed.numbers.filter(x => x && Math.abs(x) >= 0.01).map(x => V.r2(x)))).slice(0, 400);
     const fileChunks = await saveFileBytes(r, bytes, file.name, r.sub && r.sub.fileChunks);
     await saveSub(r, { src: 'pdf', file: file.name, fileChunks, fileSize: bytes.length, formNo: parsed.formNo, kind: parsed.kind, sentDate: parsed.sentDate, from: parsed.from, to: parsed.to,
-      parsed: { summary: parsed.summary, counts: parsed.counts, numbers: keep, from: parsed.from, to: parsed.to } });
+      parsed: { summary: parsed.summary, counts: parsed.counts, numbers: keep, from: parsed.from, to: parsed.to, vals: parsed.vals || null, form: parsed.form || 'new' } });
   }
   /* the submitted return's PDF is kept in the database as base64 pieces: vatFiles/<returnId>-<k> */
   const B64 = 240000;

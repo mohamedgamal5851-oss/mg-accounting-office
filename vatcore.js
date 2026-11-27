@@ -350,7 +350,61 @@
 
   /* ---------- the submitted return (PDF from the portal) ----------
      pages: array of arrays of text items in pdf.js order. Numbers are Arabic-Indic; a trailing "-" item marks a negative. */
-  function parseReturnPdf(pages) {
+  /* The old tax portal's return («GenerateTaxVat»: a fillable PDF made from Excel) keeps its figures in form fields, not in
+     the page text. Page 1 is for general-rate registrants (a9…a26), page 2 for table-tax registrants (a36…a52), page 3 has
+     the period, the documents and the send date. F: field name → value, as the PDF viewer reads them. */
+  function parseFormFields(F) {
+    const g = (k) => { const v = F[k] != null ? F[k] : F[k + '[0]']; return v == null || v === 'Off' ? '' : String(v).trim(); };
+    const n = (k) => num(g(k)), has = (k) => g(k) !== '';
+    if (!['a21', 'a47', 'a4', 'a55[1]', 'a14', 'a20'].some(has)) return null;
+    const out = { formNo: '', kind: '', from: '', to: '', sentDate: '', summary: null, counts: null, numbers: [], vals: null, form: 'old' };
+    const d8 = (v) => { const t = digitsOnly(v); return t.length === 8 ? t.slice(0, 4) + '-' + t.slice(4, 6) + '-' + t.slice(6) : ''; };
+    const lastDay = (y, m) => pad2(new Date(Number(y), Number(m), 0).getDate());
+    if (has('a53_2') && has('a54_2')) {
+      out.from = digitsOnly(g('a53_2')) + '-' + pad2(digitsOnly(g('a53_1')) || '1') + '-' + pad2(digitsOnly(g('a53')) || '1');
+      const ty = digitsOnly(g('a54_2')), tm = pad2(digitsOnly(g('a54_1')));
+      out.to = ty + '-' + tm + '-' + pad2(digitsOnly(g('a54')) || lastDay(ty, tm));
+    } else if (has('a4')) {
+      const t = digitsOnly(g('a4'));
+      if (t.length === 6) {
+        out.from = t.slice(0, 4) + '-' + t.slice(4) + '-01';
+        const em = pad2(digitsOnly(g('a5_1')) || t.slice(4)), ey = Number(em) < Number(t.slice(4)) ? String(Number(t.slice(0, 4)) + 1) : t.slice(0, 4);
+        out.to = ey + '-' + em + '-' + pad2(digitsOnly(g('a5')) || lastDay(ey, em));
+      }
+    }
+    out.sentDate = d8(g('a66'));
+    const P = has('a21') || has('a22') || !(has('a47') || has('a48')) ? ['a21', 'a22', 'a23', 'a24', 'a26', 'a25', 1] : ['a47', 'a48', 'a49', 'a50', 'a52', 'a51', 2];
+    if (P.slice(0, 5).some(has)) {
+      const o = n(P[0]), i = n(P[1]), due = has(P[2]) ? n(P[2]) : r2(o - i), prev = Math.abs(n(P[3])), amt = Math.abs(n(P[4])), calc = r2(due - prev);
+      // the amount is written without a sign: «دفع» / «مدين» is payable, «خصم» / «دائن» a credit. The figures decide; the ticked box only when they cannot
+      const res = Math.abs(calc - amt) < 0.05 ? amt : Math.abs(calc + amt) < 0.05 ? -amt : g(P[5]) === '1' ? -amt : g(P[5]) === '0' ? amt : calc;
+      out.summary = { out: o, inp: i, due, prev, res, page: P[6] };
+    }
+    if (has('a55[1]') || has('a58')) out.counts = { sInv: n('a55[1]'), sDebit: n('a55[2]'), sCredit: n('a55[3]'), sOther: n('a55[4]'), pInv: n('a58'), pRelease: n('a59') };
+    // every amount, for the detail lines of the match (not the registration no., phone, ID, dates or document counts)
+    for (const [k, v] of Object.entries(F)) {
+      if (/^a(0|1|2|3|4|5|6|7|5[3-9]|6\d|80)(_\d)?(\[\d+\])?$/.test(k) || !/^[\d٠-٩.,٫٬\-\s]+$/.test(String(v || ''))) continue;
+      const x = num(v); if (x) out.numbers.push(x);
+    }
+    // sales and inputs by kind (page 1), to show beside the sheets
+    if (has('a11[6]') || has('a17[5]')) {
+      const v = { sG: n('a9[1]') + n('a9[2]'), sS: n('a10[1]') + n('a10[2]'), sT: 0, s0: n('a11[3]'), sEx: n('a11[4]'), sAll: n('a11[6]'), sVat: n('a14') || n('a12[1]') + n('a12[2]'), sTbl: 0,
+        pT: n('a17[1]') + n('a17[2]') + n('a17[3]'), pEx: n('a17[4]'), pAll: n('a17[5]'), pVat: n('a20') || n('a18[1]') + n('a18[2]') + n('a18[3]') };
+      for (const k in v) v[k] = r2(v[k]);
+      out.vals = v;
+    }
+    return out;
+  }
+  function parseReturnPdf(pages, fields) {
+    const old = fields && Object.keys(fields).length ? parseFormFields(fields) : null;
+    const out = parseReturnText(pages);
+    if (old && old.summary) {
+      Object.assign(out, { summary: old.summary, counts: out.counts || old.counts, from: out.from || old.from, to: out.to || old.to, sentDate: out.sentDate || old.sentDate, vals: old.vals, form: 'old' });
+      out.numbers = out.numbers.concat(old.numbers);
+    }
+    return out;
+  }
+  function parseReturnText(pages) {
     const out = { formNo: '', kind: '', from: '', to: '', sentDate: '', summary: null, numbers: [], counts: null, raw: '' };
     const isNum = (s) => /^-?[0-9٠-٩][0-9٠-٩٫.,]*-?$/.test(s);
     let best = null;
@@ -431,6 +485,6 @@
   }
 
   const API = { normNo, ID_LIMIT, isExp, vatLines, inReturn, r2, r5, num, toLatin, isoDate, dotDate, periodBounds, quarterEnd, snapRate, defaultLine, invKey, invTotals, isServiceText, readWorkbook, issues, cleanNo,
-    RATE_ROWS, IN_ROWS, compute, breakdown, lineKind, BR_S, BR_P, uploadSheet, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, reconcile, VALID_REG, norm };
+    RATE_ROWS, IN_ROWS, compute, breakdown, lineKind, BR_S, BR_P, uploadSheet, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, parseFormFields, reconcile, VALID_REG, norm };
   if (typeof module === 'object' && module.exports) module.exports = API; else root.OFVatCore = API;
 })(typeof window !== 'undefined' ? window : this);
