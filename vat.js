@@ -73,8 +73,10 @@
         if (exists(snap)) entry.rows.push(...JSON.parse(JSON.stringify((snap.data() || {}).rows || [])));
       }
       entry.loaded = true;
-      let fixed = 0; for (const inv of entry.rows) if (fixNo(inv)) fixed++;
-      if (fixed && A.writable()) saveSoon(r.id);
+      let fixed = 0, notes = 0;
+      for (const inv of entry.rows) { if (fixNo(inv)) fixed++; if (V.normalizeNote(inv)) notes++; }
+      if ((fixed || notes) && A.writable() && !r.locked) saveSoon(r.id);
+      if (notes) toast('اتصححت إشارة ' + int(notes) + ' إشعار خصم / إضافة كانت قيمته بالسالب');
     } catch (e) { entry.error = (e && e.message) || 'تعذّر تحميل الفواتير.'; VS.cache.delete(r.id); toast(entry.error, true); }
     entry.loading = false; A.scheduleRender();
     return entry;
@@ -710,8 +712,8 @@
         const bs = vr.map(x => { const b = V.breakdown(x.invs); let ex = 0; for (const inv of x.invs) if (inv.side === 'P' && !inv.x) for (const l of inv.lines) if (l.e) ex += (inv.dt === 3 ? -1 : 1) * (Number(l.net) || 0); b.exp = V.r2(ex); return b; });
         const pv = vr.map(x => h.pdf[x.per] && h.pdf[x.per].vals);
         const any = (k) => bs.some(b => b[k]) || pv.some(v => v && v[k]);
-        const SC = [['sG', 'سلع خاضعة'], ['sS', 'خدمات']].concat(any('sT') ? [['sT', 'سلع جدول']] : [], [['sEx', 'معفاة']], any('s0') ? [['s0', 'صفر / تصدير']] : [], [['sAll', 'الإجمالي'], ['sVat', 'الضريبة']]);
-        const PC = [['pT', 'خاضعة'], ['pEx', 'معفاة'], ['pAll', 'الإجمالي'], ['pVat', 'الضريبة']];
+        const SC = [['sG', 'سلع خاضعة'], ['sS', 'خدمات']].concat(any('sT') ? [['sT', 'سلع جدول']] : [], [['sEx', 'معفاة']], any('s0') ? [['s0', 'صفر / تصدير']] : [], any('sAdjP') ? [['sAdjP', 'تسويات +']] : [], any('sAdjM') ? [['sAdjM', 'تسويات −']] : [], [['sAll', 'الإجمالي'], ['sVat', 'الضريبة']]);
+        const PC = [['pT', 'خاضعة'], ['pEx', 'معفاة']].concat(any('pAdjP') ? [['pAdjP', 'تسويات +']] : [], any('pAdjM') ? [['pAdjM', 'تسويات −']] : [], [['pAll', 'الإجمالي'], ['pVat', 'الضريبة']]);
         const cols = SC.concat(PC, [['exp', 'مصروفات']]);
         const tot = {}; for (const [k] of cols) tot[k] = bs.reduce((a, b) => a + (b[k] || 0), 0);
         const cells = (b, ref) => cols.map(([k]) => { const v = b ? b[k] : null, bad = ref && v != null && k !== 'exp' && Math.abs((v || 0) - (ref[k] || 0)) >= 1; return '<td class="n' + (bad ? ' cell-bad' : '') + '">' + (v == null || (k === 'exp' && !b.exp && ref == null) ? '' : v ? money(v) : '—') + '</td>'; }).join('');
@@ -898,8 +900,8 @@
   function nsGroups(invs, cid) {
     const m = new Map(), mm = partyMap(cid);
     for (const inv of invs) {
-      if (inv.side !== 'S' || !V.inReturn(inv)) continue;
-      const sg = inv.dt === 3 ? -1 : 1;
+      if (inv.side !== 'S' || !V.inReturn(inv) || inv.dt === 2 || inv.dt === 3) continue;   // notes are adjustments, not goods or services
+      const sg = 1;
       for (const l of inv.lines) {
         const k = V.lineKind(inv, l); if (k !== 'sG' && k !== 'sS') continue;
         const key = nsKey(inv, l), sum = key.startsWith('sum:');
@@ -1087,11 +1089,12 @@
   /* the return by kind. Saved with its summary; returns saved before this was added get it once their invoices are read */
   const BRQ = { q: [], busy: 0, seen: new Set() };
   function brOf(r) {
-    if (r.sum && r.sum.br) return r.sum.br;
+    if (r.sum && r.sum.br && r.sum.br.v === V.BR_V) return r.sum.br;
     const e = VS.cache.get(r.id);
     if (e && e.loaded) return V.breakdown(e.rows);
     const m = r.sub && r.sub.src === 'manual' && r.sub.parsed && r.sub.parsed.summary && r.sub.parsed.summary.br;
     if (m) return m;
+    if (r.sum && r.sum.br && !(r.chunks > 0)) return r.sum.br;
     if (!(r.chunks > 0)) return null;           // no invoices: nothing to split
     if (!BRQ.seen.has(r.id)) { BRQ.seen.add(r.id); BRQ.q.push(r); pumpBr(); }
     return undefined;                          // being read
@@ -1101,22 +1104,25 @@
       const r = BRQ.q.shift(); BRQ.busy++;
       Promise.resolve(loadRet(r)).then(async (e) => {
         const cur = retById(r.id);
-        if (e && e.loaded && cur && cur.sum && !cur.sum.br && A.writable()) {
+        if (e && e.loaded && cur && cur.sum && !(cur.sum.br && cur.sum.br.v === V.BR_V) && A.writable() && !cur.locked) {
           try { await S.db.doc('vatReturns/' + r.id).update({ sum: clean(Object.assign({}, cur.sum, { br: V.breakdown(e.rows) })) }); } catch (err) { /* shown from memory until the return is saved */ }
         }
       }).catch(() => {}).then(() => { BRQ.busy--; pumpBr(); A.scheduleRender(); });
     }
   }
-  function brTables(b) {
+  function brTables(b0) {
+    let b = b0;
     const cell = (v) => '<td class="n">' + (v ? money(v) : '—') + '</td>';
     const sK = V.BR_S.filter(([k]) => k !== 's0' || b.s0);
     const pct = (v, t) => t > 0 && v > 0 ? Math.round(v * 1000 / t) / 10 : 0;
-    const mix = b.sAll > 0 ? '<div class="br-mix" title="توزيع المبيعات">' + sK.map(([k, l], i) => pct(b[k], b.sAll) ? '<i class="br-' + k + '" style="width:' + pct(b[k], b.sAll) + '%" title="' + esc(l + ' ' + pct(b[k], b.sAll) + '%') + '"></i>' : '').join('') + '</div>' : '';
+    const sGross = sK.reduce((a, [k]) => a + (b[k] || 0), 0), pGross = (b.pT || 0) + (b.pEx || 0);
+    const adj = (p, m) => (b[p] ? '<tr class="br-adj"><td>تسويات (+) إشعارات إضافة</td>' + cell(b[p]) + '<td></td></tr>' : '') + (b[m] ? '<tr class="br-adj"><td>تسويات (−) إشعارات خصم</td><td class="n">' + money(-b[m]) + '</td><td></td></tr>' : '');
+    const mix = sGross > 0 ? '<div class="br-mix" title="توزيع المبيعات">' + sK.map(([k, l], i) => pct(b[k], sGross) ? '<i class="br-' + k + '" style="width:' + pct(b[k], sGross) + '%" title="' + esc(l + ' ' + pct(b[k], sGross) + '%') + '"></i>' : '').join('') + '</div>' : '';
     return '<div class="br-wrap"><div><table class="br-tbl"><thead><tr><th>المبيعات</th><th class="n">القيمة</th><th class="n">النسبة</th></tr></thead><tbody>' +
-      sK.map(([k, l]) => '<tr><td><i class="br-key br-' + k + '"></i>' + esc(l) + '</td>' + cell(b[k]) + '<td class="n">' + (pct(b[k], b.sAll) ? pct(b[k], b.sAll) + '%' : '') + '</td></tr>').join('') +
+      sK.map(([k, l]) => '<tr><td><i class="br-key br-' + k + '"></i>' + esc(l) + '</td>' + cell(b[k]) + '<td class="n">' + (pct(b[k], sGross) ? pct(b[k], sGross) + '%' : '') + '</td></tr>').join('') + adj('sAdjP', 'sAdjM') +
       '</tbody><tfoot><tr><td>إجمالي المبيعات</td>' + cell(b.sAll) + '<td></td></tr><tr><td>ضريبة المبيعات</td>' + cell(b.sVat) + '<td></td></tr>' + (b.sTbl ? '<tr><td>ضريبة الجدول</td>' + cell(b.sTbl) + '<td></td></tr>' : '') + '</tfoot></table>' + mix + '</div>' +
       '<div><table class="br-tbl"><thead><tr><th>المشتريات</th><th class="n">القيمة</th><th class="n">النسبة</th></tr></thead><tbody>' +
-      V.BR_P.map(([k, l]) => '<tr><td>' + esc(l) + '</td>' + cell(b[k]) + '<td class="n">' + (pct(b[k], b.pAll) ? pct(b[k], b.pAll) + '%' : '') + '</td></tr>').join('') +
+      V.BR_P.map(([k, l]) => '<tr><td>' + esc(l) + '</td>' + cell(b[k]) + '<td class="n">' + (pct(b[k], pGross) ? pct(b[k], pGross) + '%' : '') + '</td></tr>').join('') + adj('pAdjP', 'pAdjM') +
       '</tbody><tfoot><tr><td>إجمالي المشتريات</td>' + cell(b.pAll) + '<td></td></tr><tr><td>ضريبة المدخلات</td>' + cell(b.pVat) + '<td></td></tr></tfoot></table></div></div>';
   }
   function summaryTab(r, rows, calc, crit) {
@@ -1250,7 +1256,8 @@
     // the old portal's return gives its sales and inputs by kind: compare them, goods and services included
     const pv = s.parsed && s.parsed.vals;
     if (pv) {
-      const b = V.breakdown(rows), L = [['sG', 'مبيعات سلع خاضعة'], ['sS', 'مبيعات خدمات'], ['sEx', 'مبيعات معفاة'], ['s0', 'مبيعات صفر / تصدير'], ['sAll', 'إجمالي المبيعات'], ['pT', 'مشتريات خاضعة'], ['pEx', 'مشتريات معفاة'], ['pAll', 'إجمالي المشتريات']];
+      const b = V.breakdown(rows), L = [['sG', 'مبيعات سلع خاضعة'], ['sS', 'مبيعات خدمات'], ['sEx', 'مبيعات معفاة'], ['s0', 'مبيعات صفر / تصدير'], ['sAdjP', 'تسويات المبيعات (+) إشعارات إضافة'], ['sAdjM', 'تسويات المبيعات (−) إشعارات خصم'], ['sAll', 'إجمالي المبيعات'],
+        ['pT', 'مشتريات خاضعة'], ['pEx', 'مشتريات معفاة'], ['pAdjP', 'تسويات المدخلات (+) إشعارات إضافة'], ['pAdjM', 'تسويات المدخلات (−) إشعارات خصم'], ['pAll', 'إجمالي المشتريات']];
       const bad = L.some(([k]) => Math.abs((b[k] || 0) - (pv[k] || 0)) >= 1), nsBad = Math.abs((b.sS || 0) - (pv.sS || 0)) >= 1 || Math.abs((b.sG || 0) - (pv.sG || 0)) >= 1;
       h += '<section class="card"><header><h2>' + (bad ? '<span class="match-bad">✗ المبيعات والمشتريات بالقيمة</span>' : '<span class="match-ok">✓ المبيعات والمشتريات بالقيمة</span>') + '</h2><span class="grow"></span>' +
         '<button type="button" class="btn sm' + (nsBad ? ' primary' : '') + '" data-act="vat-ns" data-id="' + r.id + '">اكتشف فرق السلع والخدمات</button></header><div class="tablewrap"><table><thead><tr><th>البند</th><th class="n">حسب النظام</th><th class="n">في الإقرار المقدَّم</th><th class="n">الفرق</th></tr></thead><tbody>' +
@@ -1692,16 +1699,19 @@
       if (b === undefined) pending++;
       return Object.assign({ s, prev, res, b: b || null }, x);
     });
-    const any0 = recs.some(x => x.b && x.b.s0), anyT = recs.some(x => x.b && x.b.sTbl);
-    const sK = V.BR_S.filter(([k]) => k !== 's0' || any0);
-    const cols = leadCols.concat(sK.map(([, l]) => col(l, 1)), [col('ض. المبيعات', 1)], anyT ? [col('ض. الجدول', 1)] : [], V.BR_P.map(([, l]) => col(l, 1)),
+    const any = (k) => recs.some(x => x.b && x.b[k]), any0 = any('s0'), anyT = any('sTbl');
+    // the notes as the return shows them: (+) debit notes, (−) credit notes
+    const sA = [['sAdjP', 'تسويات +'], ['sAdjM', 'تسويات −']].filter(([k]) => any(k)), pA = [['pAdjP', 'تسويات +'], ['pAdjM', 'تسويات −']].filter(([k]) => any(k));
+    const sK = V.BR_S.filter(([k]) => k !== 's0' || any0).concat(sA), pK = V.BR_P.concat(pA);
+    const cols = leadCols.concat(sK.map(([, l]) => col(l, 1)), [col('ض. المبيعات', 1)], anyT ? [col('ض. الجدول', 1)] : [], pK.map(([, l]) => col(l, 1)),
       [col('ض. المدخلات', 1), col('المستحقة', 1), col('الرصيد السابق', 1), col('مستحق السداد', 1), col('رصيد دائن مرحّل', 1), col('الحالة'), col('التقديم')]);
-    const groups = [['', leadCols.length], ['المبيعات', sK.length + 1 + (anyT ? 1 : 0)], ['المشتريات', V.BR_P.length + 1], ['نتيجة الإقرار', 4], ['', 2]];
+    const groups = [['', leadCols.length], ['المبيعات', sK.length + 1 + (anyT ? 1 : 0)], ['المشتريات', pK.length + 1], ['نتيجة الإقرار', 4], ['', 2]];
     const nNum = cols.length - leadCols.length - 2, tot = new Array(nNum).fill(0);
     const rows = recs.map(x => {
       if (!x.r) return x.lead.concat(new Array(nNum).fill(''), [x.note || '', '']);
       const b = x.b, s = x.s, v = (k) => b ? b[k] || 0 : '';
-      const nums = sK.map(([k]) => v(k)).concat([s.out || 0], anyT ? [v('sTbl')] : [], V.BR_P.map(([k]) => v(k)), [s.inp || 0, s.due || 0, x.prev, x.res > 0 ? x.res : '', x.res < 0 ? -x.res : '']);
+      const sgn = (k) => /AdjM$/.test(k) && b ? -(b[k] || 0) : v(k);
+      const nums = sK.map(([k]) => sgn(k)).concat([s.out || 0], anyT ? [v('sTbl')] : [], pK.map(([k]) => sgn(k)), [s.inp || 0, s.due || 0, x.prev, x.res > 0 ? x.res : '', x.res < 0 ? -x.res : '']);
       nums.forEach((n, i) => { tot[i] += Number(n) || 0; });
       return x.lead.concat(nums, [SHORT[statusOf(x.r)], x.r.sub ? [x.r.sub.formNo, x.r.sub.sentDate].filter(Boolean).join(' · ') : '']);
     });
@@ -1765,7 +1775,7 @@
         for (const inv of e.rows.filter(i => i.side === side && !i.x && (!ui.rbFrom || i.date >= ui.rbFrom) && (!ui.rbTo || i.date <= ui.rbTo)).sort((a, b) => a.date.localeCompare(b.date))) {
           const sg = inv.dt === 3 ? -1 : 1, tt = V.invTotals(inv);
           const cat = (ls) => Array.from(new Set(ls.map(l => BRL[V.lineKind(inv, l)]))).join(' + ');
-          for (const l of inv.lines) addKind(side === 'P' && l.e ? 'exp' : V.lineKind(inv, l), sg * (Number(l.net) || 0), sg * (Number(l.vat) || 0));
+          for (const l of inv.lines) addKind(side === 'P' && l.e ? 'exp' : inv.dt === 2 ? 'adjP' : inv.dt === 3 ? 'adjM' : V.lineKind(inv, l), sg * (Number(l.net) || 0), sg * (Number(l.vat) || 0));
           const kinds = side === 'S' ? cat(inv.lines) : Array.from(new Set(inv.lines.map(l => (P_O.find(x => x[0] === l.o) || ['', ''])[1]))).join(' + ');
           const use = side === 'P' ? (inv.lines.every(l => l.e) ? 'مصروفات' : inv.lines.some(l => l.e) ? 'مختلط' : 'مشتريات') : null;
           const row = [inv.date, periodLabel(r), dtLabel(side, inv.dt), inv.no, inv.name, isConsumer(inv) ? inv.nid || '' : inv.reg || '', kinds].concat(side === 'P' ? [use, cat(inv.lines.filter(l => !l.e)) || '—'] : []).concat([sg * tt.net, sg * tt.vat, sg * tt.total]).concat(side === 'P' ? [Number(inv.wht) || ''] : []);
@@ -1773,7 +1783,7 @@
         }
       }
       out.foot = ['الإجمالي', '', '', '', '', '', ''].concat(side === 'P' ? ['', ''] : []).concat([t[0], t[1], t[2]]).concat(side === 'P' ? [t[3]] : []);
-      const kinds = (side === 'S' ? V.BR_S : V.BR_P.concat([['exp', 'مصروفات (خارج الإقرار)']])).filter(([k]) => byKind.has(k));
+      const kinds = (side === 'S' ? V.BR_S : V.BR_P).concat([['adjP', 'تسويات (+) إشعارات إضافة'], ['adjM', 'تسويات (−) إشعارات خصم']], side === 'P' ? [['exp', 'مصروفات (خارج الإقرار)']] : []).filter(([k]) => byKind.has(k));
       out.extra = { title: 'الإجمالي حسب التصنيف', cols: [col('التصنيف'), col('الصافي', 1), col('الضريبة', 1), col('الإجمالي', 1)],
         rows: kinds.map(([k, l]) => { const x = byKind.get(k); return [l, V.r2(x[0]), V.r2(x[1]), V.r2(x[0] + x[1])]; }), foot: ['الإجمالي', V.r2(t[0]), V.r2(t[1]), V.r2(t[2])] };
       return out;

@@ -80,6 +80,19 @@
     }
     return l;
   }
+  /* A note's amounts are kept positive: its type (2 adds, 3 subtracts) carries the sign. Portal sheets may show a credit note
+     in minus; and an «invoice» whose value is below zero is a credit note. Returns true when it changed something. */
+  function normalizeNote(inv) {
+    if (!inv || !inv.lines || !inv.lines.length) return false;
+    const net = inv.lines.reduce((a, l) => a + (Number(l.net) || 0), 0);
+    let changed = false;
+    if ((inv.dt === 1 || inv.dt === 5 || inv.dt === 6 || inv.dt == null) && net < -0.005) { inv.dt = 3; inv.dtFixed = 'قيمة سالبة: اتعامل إشعار خصم'; changed = true; }
+    if (inv.dt === 2 || inv.dt === 3) {
+      for (const l of inv.lines) for (const k of ['net', 'vat', 'tbl', 'p']) if (Number(l[k]) < 0) { l[k] = -Number(l[k]); changed = true; }
+      for (const k of ['tbl', 'wht']) if (Number(inv[k]) < 0) { inv[k] = -Number(inv[k]); changed = true; }
+    }
+    return changed;
+  }
   const invKey = (inv) => inv.side + '|' + (inv.reg || inv.name || '') + '|' + String(inv.no || '').trim() + '|' + (inv.dt || 1);
   const isExp = (l) => !!(l && l.e);
   const vatLines = (inv) => (inv.lines || []).filter(l => !isExp(l));
@@ -112,8 +125,8 @@
   };
   const etaDocType = (t, side, reg) => {
     const s = norm(t);
-    if (/دائن|خصم/.test(s)) return 3;
-    if (/مدين|اضاف/.test(s)) return 2;
+    if (/دائن|خصم|مرتجع|credit|^c$/i.test(s)) return 3;
+    if (/مدين|اضاف|debit|^d$/i.test(s)) return 2;
     return side === 'S' && !VALID_REG(reg) ? 5 : 1;
   };
   const etaValid = (st) => { const s = norm(st); return !s || /صحيح|valid|مقبول/i.test(s); };
@@ -174,6 +187,7 @@
         }
         if (!lines) lines = [{ d: name ? 'فاتورة ' + (s === 'P' ? 'مشتريات من ' : 'مبيعات إلى ') + name : 'فاتورة', q: 1, p: net, net, vat, sum: true }];
         inv.lines = lines.map(l => defaultLine(s, l, mem, s === 'S' && memFor && !l.sum ? memFor('I', itemKey(l)) : null));
+        normalizeNote(inv);
         invoices.push(inv);
       }
     }
@@ -203,6 +217,7 @@
       else if (O) line.o = O;
       inv.lines.push(defaultLine(s, line, memFor ? memFor(s, inv.reg || inv.name) : null, s === 'S' && memFor && line.n == null ? memFor('I', itemKey(line)) : null));
     }
+    for (const inv of invoices) normalizeNote(inv);
     return { kind: 'template', invoices, skipped: 0, notes };
   }
 
@@ -220,6 +235,7 @@
     if (!inv.no) out.push(['crit', 'رقم المستند ناقص']);
     else if (!digitsOnly(inv.no)) out.push(['crit', 'رقم المستند لا يحتوي على أرقام']);
     if (!inv.date) out.push(['crit', 'التاريخ ناقص']);
+    if (inv.dtFixed) out.push(['info', inv.dtFixed]);
     else if (ret && (inv.date < ret.from || inv.date > ret.to)) out.push(['warn', 'التاريخ خارج فترة الإقرار']);
     if (inv.prior) out.push(['warn', 'مدرجة أيضًا في ' + inv.prior]);
     if (!inv.name) out.push(['crit', 'اسم ' + (inv.side === 'P' ? 'المورد' : 'العميل') + ' ناقص']);
@@ -283,9 +299,11 @@
 
   /* ---------- the return by kind (for the summary and the reports) ----------
      sales: taxable goods, services, table goods (ضريبة الجدول), exempt, zero-rated / export; purchases: taxable and exempt.
-     Credit notes count negative, debit notes positive, so each side adds up to the return's sales and inputs values. */
+     As on the return form, the kinds are the invoices' values, and the notes stand apart as adjustments: debit notes (+)
+     and credit notes (−). Kinds + adjustments(+) − adjustments(−) add up to the return's sales and inputs values. */
   const BR_S = [['sG', 'سلع خاضعة'], ['sS', 'خدمات'], ['sT', 'سلع جدول'], ['sEx', 'معفاة'], ['s0', 'صفر / تصدير']];
   const BR_P = [['pT', 'خاضعة'], ['pEx', 'معفاة']];
+  const BR_V = 2;
   function lineKind(inv, l) {
     if (inv.side === 'P') return l.o === 7 || !Number(l.rate) ? 'pEx' : 'pT';
     if (l.o === 7) return 'sEx';
@@ -295,20 +313,21 @@
     return l.n === 'S' ? 'sS' : 'sG';
   }
   function breakdown(invoices) {
-    const b = { sG: 0, sS: 0, sT: 0, sEx: 0, s0: 0, sVat: 0, sTbl: 0, pT: 0, pEx: 0, pVat: 0 };
+    const b = { v: BR_V, sG: 0, sS: 0, sT: 0, sEx: 0, s0: 0, sAdjP: 0, sAdjM: 0, sVat: 0, sTbl: 0, pT: 0, pEx: 0, pAdjP: 0, pAdjM: 0, pVat: 0 };
     for (const inv of invoices || []) {
       if (!inReturn(inv)) continue;
-      const sg = inv.dt === 3 ? -1 : 1;
-      if (inv.side === 'S') {
-        for (const l of inv.lines || []) { b[lineKind(inv, l)] += sg * (Number(l.net) || 0); b.sVat += sg * (Number(l.vat) || 0); }
-        const lt = (inv.lines || []).reduce((a, l) => a + (Number(l.tbl) || 0), 0);
-        b.sTbl += sg * (lt || Number(inv.tbl) || 0);
-      } else {
-        for (const l of vatLines(inv)) { b[lineKind(inv, l)] += sg * (Number(l.net) || 0); b.pVat += sg * (Number(l.vat) || 0); }
+      const note = inv.dt === 2 ? 'P' : inv.dt === 3 ? 'M' : '', sg = inv.dt === 3 ? -1 : 1;
+      const lines = inv.side === 'S' ? inv.lines || [] : vatLines(inv), pre = inv.side === 'S' ? 's' : 'p';
+      for (const l of lines) {
+        const net = Number(l.net) || 0;
+        if (note) b[pre + 'Adj' + note] += net; else b[lineKind(inv, l)] += net;
+        b[pre + 'Vat'] += sg * (Number(l.vat) || 0);
       }
+      if (inv.side === 'S') { const lt = (inv.lines || []).reduce((a, l) => a + (Number(l.tbl) || 0), 0); b.sTbl += sg * (lt || Number(inv.tbl) || 0); }
     }
     for (const k in b) b[k] = r2(b[k]);
-    b.sAll = r2(b.sG + b.sS + b.sT + b.sEx + b.s0); b.pAll = r2(b.pT + b.pEx);
+    b.v = BR_V;
+    b.sAll = r2(b.sG + b.sS + b.sT + b.sEx + b.s0 + b.sAdjP - b.sAdjM); b.pAll = r2(b.pT + b.pEx + b.pAdjP - b.pAdjM);
     return b;
   }
 
@@ -394,8 +413,14 @@
     }
     // sales and inputs by kind (page 1), to show beside the sheets
     if (has('a11[6]') || has('a17[5]')) {
-      const v = { sG: n('a9[1]') + n('a9[2]'), sS: n('a10[1]') + n('a10[2]'), sT: 0, s0: n('a11[3]'), sEx: n('a11[4]'), sAll: n('a11[6]'), sVat: n('a14') || n('a12[1]') + n('a12[2]'), sTbl: 0,
-        pT: n('a17[1]') + n('a17[2]') + n('a17[3]'), pEx: n('a17[4]'), pAll: n('a17[5]'), pVat: n('a20') || n('a18[1]') + n('a18[2]') + n('a18[3]') };
+      // each kind's goods and services as written, and the adjustment columns: (+) debit notes, (−) credit notes (written without a sign)
+      const rows = (f, a, b) => { let t = 0; for (let i = a; i <= b; i++) t += Math.abs(n(f + '[' + i + ']')); return t; };
+      const v = { v: BR_V, sG: n('a9[1]') + n('a9[2]'), sS: n('a10[1]') + n('a10[2]'), sT: 0, s0: n('a9[3]') + n('a10[3]'), sEx: n('a9[4]') + n('a10[4]'),
+        sAdjP: has('a10_1[6]') ? Math.abs(n('a10_1[6]')) : rows('a10_1', 1, 5), sAdjM: has('a10_2[6]') ? Math.abs(n('a10_2[6]')) : rows('a10_2', 1, 5),
+        sAll: n('a11[6]'), sVat: n('a14') || n('a12[1]') + n('a12[2]'), sTbl: 0,
+        pT: n('a15[1]') + n('a15[2]') + n('a15[3]') + n('a16[1]') + n('a16[2]') + n('a16[3]'), pEx: n('a15[4]') + n('a16[4]'),
+        pAdjP: has('a16_1[5]') ? Math.abs(n('a16_1[5]')) : rows('a16_1', 1, 4), pAdjM: has('a16_2[5]') ? Math.abs(n('a16_2[5]')) : rows('a16_2', 1, 4),
+        pAll: n('a17[5]'), pVat: n('a20') || n('a18[1]') + n('a18[2]') + n('a18[3]') };
       for (const k in v) v[k] = r2(v[k]);
       out.vals = v;
     }
@@ -476,6 +501,10 @@
     add(calc.res >= 0 ? 'الصافي المستحق السداد' : 'الرصيد الدائن المرحّل', calc.res, S.res, 1);
     add('إجمالي وعاء المبيعات', calc.salesTotal.total);
     add('إجمالي قيمة المدخلات', calc.inputsTotal.total);
+    if (calc.salesTotal.ap) add('تسويات المبيعات (+) إشعارات إضافة', calc.salesTotal.ap);
+    if (calc.salesTotal.am) add('تسويات المبيعات (−) إشعارات خصم', calc.salesTotal.am);
+    if (calc.inputsTotal.ap) add('تسويات المدخلات (+) إشعارات إضافة', calc.inputsTotal.ap);
+    if (calc.inputsTotal.am) add('تسويات المدخلات (−) إشعارات خصم', calc.inputsTotal.am);
     for (const [k, l] of RATE_ROWS) if (calc.sales[k].total) { add('مبيعات ' + l + ' – القيمة', calc.sales[k].total); add('مبيعات ' + l + ' – الضريبة', calc.sales[k].tax); }
     for (const [k, l] of IN_ROWS) if (calc.inputs[k].total) { add('مدخلات ' + l + ' – القيمة', calc.inputs[k].total); add('مدخلات ' + l + ' – الضريبة', calc.inputs[k].tax); }
     if (sub.counts) {
@@ -491,6 +520,6 @@
   }
 
   const API = { normNo, ID_LIMIT, isExp, vatLines, inReturn, r2, r5, num, toLatin, isoDate, dotDate, periodBounds, quarterEnd, snapRate, defaultLine, invKey, invTotals, isServiceText, serviceWord, itemKey, readWorkbook, issues, cleanNo,
-    RATE_ROWS, IN_ROWS, compute, breakdown, lineKind, BR_S, BR_P, uploadSheet, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, parseFormFields, reconcile, VALID_REG, norm };
+    RATE_ROWS, IN_ROWS, compute, breakdown, lineKind, normalizeNote, BR_S, BR_P, BR_V, uploadSheet, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, parseFormFields, reconcile, VALID_REG, norm };
   if (typeof module === 'object' && module.exports) module.exports = API; else root.OFVatCore = API;
 })(typeof window !== 'undefined' ? window : this);
