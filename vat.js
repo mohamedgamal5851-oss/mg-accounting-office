@@ -144,6 +144,14 @@
     }
     return out;
   }
+  async function allDocs() {
+    const out = [];
+    for (const ch of await allChunks()) for (const inv of ch.rows || []) for (let k = 0; k < ((inv.pdf && inv.pdf.n) || 0); k++) {
+      const id = ch.ret + '-' + inv.id + '-' + k, snap = await S.db.doc('vatDocs/' + id).get();
+      if (exists(snap)) out.push(Object.assign({ id }, snap.data()));
+    }
+    return out;
+  }
   async function allChunks() {
     const out = [];
     for (const r of rets()) for (let k = 0; k < (r.chunks || 0); k++) {
@@ -1210,7 +1218,7 @@
     const shown = list.slice(0, 600);
     for (const inv of list) { const t = V.invTotals(inv); if (!inv.x) { const sg = inv.dt === 3 ? -1 : 1; tn += sg * t.net; tv += sg * t.vat; tw += Number(inv.wht) || 0; } }
     for (const inv of shown) {
-      const t = V.invTotals(inv), notes = (inv.noOrig ? '<span class="iss info">الرقم الأصلي: ' + esc(inv.noOrig) + '</span>' : '') + iss.get(inv.id).map(x => '<span class="iss ' + x[0] + '">' + esc(x[1]) + '</span>').join('') + (inv.x ? '<span class="iss warn">مستبعدة' + (inv.xr ? ': ' + esc(inv.xr) : '') + '</span>' : '');
+      const t = V.invTotals(inv), notes = (inv.pdf ? '<a href="#" class="iss info pdf-link" data-act="vat-inv-pdf" data-ref="' + esc(r.id + '|' + inv.id) + '" title="معاينة الفاتورة وطباعتها">📄 PDF</a>' : '') + (inv.noOrig ? '<span class="iss info">الرقم الأصلي: ' + esc(inv.noOrig) + '</span>' : '') + iss.get(inv.id).map(x => '<span class="iss ' + x[0] + '">' + esc(x[1]) + '</span>').join('') + (inv.x ? '<span class="iss warn">مستبعدة' + (inv.xr ? ': ' + esc(inv.xr) : '') + '</span>' : '');
       const btns = '<button type="button" class="btn sm" data-act="vat-edit-inv" data-id="' + inv.id + '">' + (A.writable() ? 'تعديل' : 'عرض') + '</button>' + (A.writable() ? ' <button type="button" class="btn sm" data-act="vat-toggle-x" data-id="' + inv.id + '">' + (inv.x ? 'إرجاع' : 'استبعاد') + '</button>' : '');
       h += '<tr class="' + (inv.x ? 'x' : '') + '">' + ck(inv.id, VS.sel.has(inv.id)) + '<td>' + esc(dtLabel(side, inv.dt)) + '</td><td class="num">' + esc(inv.no) + '</td><td class="num">' + esc(inv.date) + '</td><td class="wrap">' + esc(inv.name) + '</td><td class="num">' + esc(isConsumer(inv) ? inv.nid || '' : inv.reg || '') + '</td>' +
         '<td>' + lineSel(inv) + '</td>' + (side === 'P' ? '<td>' + useSel(inv) + '</td>' : '') +
@@ -1862,6 +1870,72 @@
     const b = brReport([col('الشركة'), col('الفترة')], list.map(r => ({ lead: [A.clientName(r.client), perShort(r.period) + (r.kind === 'amended' ? ' (معدل)' : '')], r })));
     return Object.assign(b, { title: 'ملخص إقرارات القيمة المضافة', ctx: (ui.rsYear || 'جميع السنوات') + (ui.rbClient ? ' · ' + A.clientName(ui.rbClient) : ''), landscape: true });
   }
+  /* ---------------- e-invoice PDFs ----------------
+     a folder of the portal's invoice PDFs is read, each file is matched to its invoice (electronic number, internal
+     number, registration number, date and amount) and kept in the database (vatDocs/<returnId>-<invoiceId>-<k>);
+     the invoice keeps { pdf: { name, n } } and its electronic number (uuid) */
+  async function readEInvoice(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer()), lib = await pdfLib();
+    const doc = await lib.getDocument({ data: bytes.slice(), password: '', cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/', cMapPacked: true, useSystemFonts: true }).promise;
+    const meta = await doc.getMetadata().catch(() => null);
+    let txt = '';
+    for (let p = 1; p <= Math.min(3, doc.numPages); p++) { const tc = await (await doc.getPage(p)).getTextContent(); txt += tc.items.map(i => i.str).join(' ') + '\n'; }
+    try { doc.destroy(); } catch (e) {}
+    return Object.assign(V.parseEInvoice(txt, meta && meta.info && meta.info.Title, file.name), { bytes, name: file.name });
+  }
+  async function saveInvPdf(rid, inv, bytes, name) {
+    const b64 = toB64(bytes), n = Math.ceil(b64.length / B64), old = (inv.pdf && inv.pdf.n) || 0, base = 'vatDocs/' + rid + '-' + inv.id + '-';
+    const ok = await write(async () => {
+      for (let k = 0; k < n; k++) await S.db.doc(base + k).set({ ret: rid, inv: inv.id, k, name, data: b64.slice(k * B64, (k + 1) * B64) });
+      for (let k = n; k < old; k++) await S.db.doc(base + k).delete();
+    });
+    if (ok) inv.pdf = { name, n, size: bytes.length, at: new Date().toISOString() };
+    return ok;
+  }
+  async function loadInvPdf(rid, inv) {
+    let b64 = '';
+    for (let k = 0; k < inv.pdf.n; k++) { const snap = await S.db.doc('vatDocs/' + rid + '-' + inv.id + '-' + k).get(); if (!exists(snap)) throw new Error('ملف الفاتورة غير مكتمل. ارفعه تاني.'); b64 += snap.data().data; }
+    return fromB64(b64);
+  }
+  async function deleteInvPdfs(rid, rows) { for (const inv of rows || []) for (let k = 0; k < ((inv.pdf && inv.pdf.n) || 0); k++) await S.db.doc('vatDocs/' + rid + '-' + inv.id + '-' + k).delete(); }
+  function invByRef(ref) {
+    const i = String(ref || '').lastIndexOf('|'), rid = ref.slice(0, i), id = ref.slice(i + 1), e = VS.cache.get(rid);
+    return { r: retById(rid), rid, inv: e && e.rows.find(x => x.id === id) };
+  }
+  function viewInvPdf(ref) {
+    const { rid, inv } = invByRef(ref);
+    if (!inv || !inv.pdf) return toast('مفيش ملف PDF للفاتورة دي.', true);
+    return viewPdf((inv.dt === 3 ? 'إشعار خصم' : inv.dt === 2 ? 'إشعار إضافة' : 'فاتورة') + ' رقم ' + (inv.noOrig || inv.no) + ' · ' + (inv.name || '') + ' · ‎' + (inv.date || ''), inv.pdf.name || (inv.no + '.pdf'), () => loadInvPdf(rid, inv));
+  }
+  async function uploadInvPdfs(files) {
+    const cid = ui.rbClient; if (!cid || !A.writable()) return;
+    files = Array.from(files || []).filter(f => /\.pdf$/i.test(f.name));
+    if (!files.length) return toast('الفولدر مفيهوش ملفات PDF.', true);
+    const bg = modal('ربط فواتير PDF بالدفتر', '<div id="ip-body"><div class="loading">جارٍ تحميل فواتير الشركة…</div></div>', '<button type="button" class="btn" data-close>إغلاق</button>', true);
+    const box = $('#ip-body', bg), say = (h) => { box.innerHTML = h; };
+    // every invoice of the company, from all its returns
+    const list = rets().filter(r => r.client === cid), cands = [];
+    for (const r of list) { const e = await loadedRet(r); if (e) for (const inv of e.rows) if (!inv.x) cands.push({ r, inv }); }
+    const done = [], miss = [], dirty = new Set(), taken = new Map();
+    for (let i = 0; i < files.length; i++) {
+      say('<div class="loading">جارٍ قراءة الملف ' + int(i + 1) + ' من ' + int(files.length) + '…<br><small>' + esc(files[i].name) + '</small></div>');
+      let info;
+      try { info = await readEInvoice(files[i]); } catch (e) { miss.push([files[i].name, 'الملف ما اتقريش']); continue; }
+      const sc = cands.map(c => [V.scoreEInvoice(info, c.inv), c]).filter(x => x[0] >= 7).sort((a, b) => b[0] - a[0]);
+      if (!sc.length) { miss.push([files[i].name, 'مفيش فاتورة في البرنامج بنفس الرقم والتسجيل والتاريخ']); continue; }
+      if (sc[1] && sc[1][0] >= sc[0][0] - 1) { miss.push([files[i].name, 'أكتر من فاتورة شبهه (' + sc.slice(0, 3).map(x => x[1].inv.noOrig || x[1].inv.no).join('، ') + ')']); continue; }
+      const { r, inv } = sc[0][1];
+      if (taken.has(inv)) { miss.push([files[i].name, 'نفس فاتورة الملف ' + taken.get(inv)]); continue; }
+      if (await saveInvPdf(r.id, inv, info.bytes, files[i].name)) {
+        if (info.uuid && !inv.uuid) inv.uuid = info.uuid;
+        taken.set(inv, files[i].name); dirty.add(r.id); done.push([files[i].name, inv]);
+      } else miss.push([files[i].name, 'ما اتحفظش']);
+    }
+    for (const rid of dirty) await saveNow(rid);
+    A.renderPage();
+    say('<div class="note ' + (miss.length ? 'warn' : 'info') + '">اتربط ' + int(done.length) + ' ملف من ' + int(files.length) + ' بفواتيرهم.' + (miss.length ? ' ' + int(miss.length) + ' ملف ما اتربطش:' : '') + '</div>' +
+      (miss.length ? '<div class="tablewrap"><table class="vat-tbl"><thead><tr><th>الملف</th><th>السبب</th></tr></thead><tbody>' + miss.map(([n, w]) => '<tr><td>' + esc(n) + '</td><td class="hint">' + esc(w) + '</td></tr>').join('') + '</tbody></table></div>' : ''));
+  }
   /* ---------------- books: sales, purchases (without expenses) and expenses ----------------
      a year (all returns of that year) or a date range; each month closes with a total row.
      the classification is split into amount columns; the user hides or shows any column. */
@@ -1882,7 +1956,8 @@
     const cols = [C('date', 'التاريخ'), C('ret', 'الإقرار'), C('dt', 'نوع المستند'), C('no', 'الرقم'), C('name', side === 'S' ? 'العميل' : 'المورد'), C('reg', side === 'S' ? 'التسجيل / القومي' : 'رقم التسجيل')]
       .concat(side === 'S' ? V.BR_S.map(([k, l]) => C(k, l, 1, 1)).concat([C('adjP', 'إشعارات إضافة (+)', 1, 1), C('adjM', 'إشعارات خصم (−)', 1, 1), C('net', 'الصافي', 1), C('tbl', 'ضريبة الجدول', 1, 1), C('vat', 'الضريبة', 1), C('total', 'الإجمالي', 1)])
         : side === 'P' ? [C('kind', 'نوع السلعة')].concat(V.BR_P.map(([k, l]) => C(k, l, 1, 1)), [C('adjP', 'إشعارات إضافة (+)', 1, 1), C('adjM', 'إشعارات خصم (−)', 1, 1), C('net', 'الصافي', 1), C('vat', 'الضريبة', 1), C('total', 'الإجمالي', 1), C('wht', 'خصم وإضافة', 1, 1)])
-        : [C('desc', 'البيان'), C('et', 'نوع المصروف'), C('net', 'الصافي', 1), C('vat', 'الضريبة', 1), C('total', 'الإجمالي', 1), C('wht', 'خصم وإضافة', 1, 1)]);
+        : [C('desc', 'البيان'), C('et', 'نوع المصروف'), C('net', 'الصافي', 1), C('vat', 'الضريبة', 1), C('total', 'الإجمالي', 1), C('wht', 'خصم وإضافة', 1, 1)])
+      .concat([Object.assign(C('pdf', 'الفاتورة', 0, 1), { noPdf: 1, noXlsx: 1 })]);
     const idx = Object.fromEntries(cols.map((c, i) => [c.id, i]));
     const yr = cid ? bookYear(cid) : '';
     const out = { title: (BOOKS.find(b => b[0] === side) || BOOKS[0])[1], ctx: (A.clientName(cid) || '') + ' · ' + (range ? (ui.rbFrom || 'البداية') + ' ← ' + (ui.rbTo || 'اليوم') : 'سنة ' + yr), cols: [], rows: [], landscape: true, pending: 0, allCols: [], tcls: 'book' };
@@ -1907,6 +1982,7 @@
         const lt = lines.reduce((a, l) => a + (Number(l.tbl) || 0), 0), tbl = side === 'S' ? sg * (lt || Number(inv.tbl) || 0) : 0;
         Object.assign(row, { [idx.date]: inv.date, [idx.ret]: periodLabel(r) + (r.kind === 'amended' ? ' (معدل)' : ''), [idx.dt]: dtLabel(inv.side, inv.dt), [idx.no]: inv.no, [idx.name]: inv.name, [idx.reg]: isConsumer(inv) ? inv.nid || '' : inv.reg || '' });
         add('net', net); add('tbl', tbl); add('vat', vat); add('total', net + tbl + vat);
+        row.pid = r.id + '|' + inv.id; if (inv.pdf) { row.pdf = 1; row[idx.pdf] = 'PDF'; }
         if (side === 'P') { row[idx.kind] = Array.from(new Set(lines.map(l => (P_O.find(x => x[0] === l.o) || ['', ''])[1]).filter(Boolean))).join(' + '); if (Number(inv.wht)) row[idx.wht] = Number(inv.wht); }
         if (side === 'E') {
           const ds = lines.map(l => String(l.d || '').trim()).filter(Boolean);
@@ -1923,7 +1999,7 @@
     // which columns show: what the user chose, else every column (amount columns with nothing in them stay hidden)
     const hid = rbHidden();
     const vis = cols.map((c, i) => {
-      const empty = c.n ? !items.some(x => Number(x.row[i])) : false, key = side + ':' + c.id;
+      const empty = c.id === 'pdf' ? !items.some(x => x.row.pdf) : c.n ? !items.some(x => Number(x.row[i])) : false, key = side + ':' + c.id;
       const hidden = key in hid ? !!hid[key] : !!(c.auto && empty);
       out.allCols.push({ id: c.id, h: c.h, hidden, empty });
       return !hidden;
@@ -1938,8 +2014,8 @@
       all.push(...rows);
       if (months.length > 1) { const t = sumRow(rows, 'إجمالي ' + A.monthLabel(m) + ' (' + int(rows.length) + ' مستند)'); t.cls = 'mtot'; all.push(t); }
     }
-    const pick = (r) => { const o = r.filter((v, i) => vis[i]); for (const k of ['cls', 'auto', 'ref', 'ro']) if (r[k] !== undefined) o[k] = r[k]; return o; };
-    out.cols = cols.filter((c, i) => vis[i]).map(c => c.id === 'et' ? Object.assign({}, c, { fmt: etCell }) : c);
+    const pick = (r) => { const o = r.filter((v, i) => vis[i]); for (const k of ['cls', 'auto', 'ref', 'ro', 'pdf', 'pid']) if (r[k] !== undefined) o[k] = r[k]; return o; };
+    out.cols = cols.filter((c, i) => vis[i]).map(c => c.id === 'et' ? Object.assign({}, c, { fmt: etCell }) : c.id === 'pdf' ? Object.assign({}, c, { fmt: pdfCell }) : c);
     out.rows = all.map(pick);
     out.foot = pick(sumRow(items.map(x => x.row), 'الإجمالي (' + int(items.length) + ' مستند)'));
     if (side === 'E') {
@@ -1955,6 +2031,7 @@
     }
     return out;
   }
+  const pdfCell = (v, row) => row.pdf ? '<a href="#" class="pdf-link" data-act="vat-inv-pdf" data-ref="' + esc(row.pid) + '" title="معاينة الفاتورة وطباعتها">📄 عرض</a>' : '';
   /* the expense type cell: an input the user writes in (kept on the invoice, and for its supplier) */
   function etCell(v, row) {
     if (row.ro || !row.ref) return esc(v || '');
@@ -1964,6 +2041,7 @@
   // a click anywhere outside the columns menu closes it
   document.addEventListener('click', (ev) => { const d = document.getElementById('rb-cols'); if (d && d.open && !ev.target.closest('.colpick')) { d.open = false; ui.rbColsOpen = ''; } });
   function bindBooks() {
+    for (const id of ['inv-pdf-dir', 'inv-pdf-files']) { const el = document.getElementById(id); if (el) el.addEventListener('change', () => { const f = Array.from(el.files || []); el.value = ''; if (f.length) uploadInvPdfs(f); }); }
     const d = $('#rb-cols'); if (d) d.addEventListener('toggle', () => { ui.rbColsOpen = d.open ? '1' : ''; });
     $$('[data-et]').forEach(el => el.addEventListener('change', () => {
       const [rid, ri] = [el.dataset.et.slice(0, el.dataset.et.lastIndexOf(':')), Number(el.dataset.et.slice(el.dataset.et.lastIndexOf(':') + 1))];
@@ -2001,7 +2079,9 @@
         (ui.rbYear === 'range' ? '<label class="inl">من <input type="date" data-ui="rbFrom" value="' + esc(ui.rbFrom) + '"></label><label class="inl">إلى <input type="date" data-ui="rbTo" value="' + esc(ui.rbTo) + '"></label>' : '') +
         (rep.allCols && rep.allCols.length && !rep.needClient ? '<details class="colpick" id="rb-cols"' + (ui.rbColsOpen ? ' open' : '') + '><summary class="btn">▦ الأعمدة' + (nh ? ' <span class="hint">(' + int(nh) + ' مخفي)</span>' : '') + '</summary><div class="colmenu">' +
           rep.allCols.map(c => '<a href="#" data-act="vat-rb-col" data-c="' + c.id + '"' + (c.hidden ? '' : ' class="on"') + '><i>' + (c.hidden ? '' : '✓') + '</i>' + esc(c.h) + (c.empty ? ' <span class="hint">فاضي</span>' : '') + '</a>').join('') +
-          '<hr><a href="#" data-act="vat-rb-col" data-c="*"><i></i>إظهار كل الأعمدة</a><a href="#" data-act="vat-rb-col" data-c="-"><i></i>رجوع للافتراضي</a></div></details>' : '');
+          '<hr><a href="#" data-act="vat-rb-col" data-c="*"><i></i>إظهار كل الأعمدة</a><a href="#" data-act="vat-rb-col" data-c="-"><i></i>رجوع للافتراضي</a></div></details>' : '') +
+        (ui.rbClient && A.writable() ? '<button type="button" class="btn" data-act="vat-inv-pdfs" data-v="dir" title="اختار فولدر فيه فواتير المنظومة PDF، وكل ملف بيتربط بفاتورته">⤒ فولدر فواتير PDF</button><button type="button" class="btn ghost" data-act="vat-inv-pdfs" data-v="files" title="اختار ملف أو أكتر">ملفات PDF</button>' +
+          '<input type="file" id="inv-pdf-dir" webkitdirectory directory multiple hidden><input type="file" id="inv-pdf-files" accept=".pdf,application/pdf" multiple hidden>' : '');
     }
     const canExp = S.downloads && !rep.needClient && !(rep.pending && key === 'books');
     h += '<div class="toolbar">' + f + '<span class="grow"></span>' + (canExp ? '<button type="button" class="btn" data-act="vat-rep-pdf" data-key="' + key + '">⤓ PDF</button><button type="button" class="btn" data-act="vat-rep-xlsx" data-key="' + key + '">⤓ Excel</button>' : '') + '</div>';
@@ -2076,6 +2156,8 @@
       case 'vat-bulk': return r ? bulk(r, el.dataset.op) : null;
       case 'vat-list-status': ui.vStatus = el.dataset.v; return A.go('vat-list');
       case 'vat-book': ui.rbSide = el.dataset.v; ui.rbColsOpen = ''; return A.go('vat-rep-books');
+      case 'vat-inv-pdfs': { const inp = document.getElementById(el.dataset.v === 'dir' ? 'inv-pdf-dir' : 'inv-pdf-files'); if (inp) inp.click(); return; }
+      case 'vat-inv-pdf': return viewInvPdf(el.dataset.ref);
       case 'vat-rb-col': {
         const side = bookSide(), hid = rbHidden(), c = el.dataset.c, rep = booksData();
         if (c === '*') for (const x of rep.allCols) hid[side + ':' + x.id] = false;
@@ -2107,7 +2189,8 @@
       case 'vat-del-ret': {
         const x = retById(el.dataset.id); if (!x) return;
         return confirmBox('حذف الإقرار', 'سيُحذف إقرار ' + A.clientName(x.client) + ' عن ' + periodLabel(x) + ' بجميع فواتيره. الحذف نهائي.', 'حذف', async () => {
-          const ok = await write(async () => { for (let k = 0; k < (x.chunks || 0); k++) await S.db.doc('vatInvoices/' + x.id + '-' + k).delete(); await deleteFile(x); await S.db.doc('vatReturns/' + x.id).delete(); });
+          const ex = await loadedRet(x);
+          const ok = await write(async () => { if (ex) await deleteInvPdfs(x.id, ex.rows); for (let k = 0; k < (x.chunks || 0); k++) await S.db.doc('vatInvoices/' + x.id + '-' + k).delete(); await deleteFile(x); await S.db.doc('vatReturns/' + x.id).delete(); });
           if (ok) { VS.cache.delete(x.id); closeModal(); A.go('vat-list'); toast('تم حذف الإقرار'); }
         });
       }
@@ -2151,5 +2234,5 @@
     const r = cur(); if (!r || !A.writable() || r.locked) return;
     ev.preventDefault(); undo(r.id);
   });
-  window.OFVat = { page, bind, act, allChunks, allFiles, homeStats, navMenu, crumbs, dueSummary, payInfo, cycleStats, resetCache: () => { VS.cache.clear(); VS.undo.clear(); VS.sel.clear(); } };
+  window.OFVat = { page, bind, act, allChunks, allFiles, allDocs, homeStats, navMenu, crumbs, dueSummary, payInfo, cycleStats, resetCache: () => { VS.cache.clear(); VS.undo.clear(); VS.sel.clear(); } };
 })();

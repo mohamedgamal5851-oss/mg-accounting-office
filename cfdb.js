@@ -10,7 +10,7 @@
   let framed = false; try { framed = window.top !== window.self; } catch (e) { framed = true; }   // claude.ai shows the program inside a frame
   if (window.claude || local || (framed && !forced) || (!forced && (!/^https?:$/.test(location.protocol) || /claude|anthropic|usercontent|localhost|127\.0\.0\.1/i.test(host)))) return;
 
-  const HEAVY = ['vatInvoices', 'vatFiles'];
+  const HEAVY = ['vatInvoices', 'vatFiles', 'vatDocs'];
   const POLL_MS = 5000, OVERLAP_MS = 30000;
   const mem = new Map(), colSubs = new Map(), docSubs = new Map();
   let me = null, since = 0, pollTimer = null, onAuth = null;

@@ -7,7 +7,7 @@
 const COOKIE = 'of_s';
 const SESSION_DAYS = 30;
 const PBKDF2_ITER = 100000;
-const HEAVY = ['vatInvoices', 'vatFiles'];          // read one record at a time, never in the bulk sync
+const HEAVY = ['vatInvoices', 'vatFiles', 'vatDocs'];          // read one record at a time, never in the bulk sync
 const ADMIN_ONLY_WRITE = [/^vault\//, /^meta\/users/];
 const ADMIN_ONLY_DELETE = [/^clients\//];
 const PATH_RE = /^[A-Za-z0-9_]{1,40}\/[^\/\s]{1,200}$/;
@@ -30,11 +30,11 @@ async function ensureSchema(db) {
    The server applies them too: a collection is sent only to users who may see a page that needs it, and written only by
    users who may edit a page that writes it. */
 const PERM_KEYS = ['dashboard', 'clients', 'finance', 'tasks', 'contracts', 'certs', 'feecalc', 'reports', 'backup', 'setup', 'access', 'vat'];
-const READ_GATE = { vatReturns: ['vat'], vatParties: ['vat'], vatInvoices: ['vat'], vatFiles: ['vat'], credentials: ['access'], certificates: ['certs'] };
+const READ_GATE = { vatReturns: ['vat'], vatParties: ['vat'], vatInvoices: ['vat'], vatFiles: ['vat'], vatDocs: ['vat'], credentials: ['access'], certificates: ['certs'] };
 const WRITE_BY = {
   clients: ['clients'], transactions: ['finance', 'clients', 'feecalc', 'contracts'], tasks: ['tasks', 'clients', 'vat'], contracts: ['contracts', 'clients'],
   certificates: ['certs'], staff: ['setup'], meta: ['setup', 'certs'], credentials: ['access'],
-  vatReturns: ['vat'], vatParties: ['vat'], vatInvoices: ['vat'], vatFiles: ['vat']
+  vatReturns: ['vat'], vatParties: ['vat'], vatInvoices: ['vat'], vatFiles: ['vat'], vatDocs: ['vat']
 };
 function permsOf(u) {
   let p = {}; try { p = JSON.parse(u.perms || '{}') || {}; } catch (e) {}

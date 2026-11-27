@@ -1240,7 +1240,7 @@
   function dropCols(rep, keep) {
     const idx = rep.cols.map((c, i) => keep(c, i) ? i : -1).filter(i => i >= 0);
     if (idx.length === rep.cols.length) return rep;
-    const pick = (r) => { if (!r) return r; const o = idx.map(i => r[i]); for (const k of ['cls', 'rid', 'auto', 'ref', 'ro']) if (r[k] !== undefined) o[k] = r[k]; return o; };
+    const pick = (r) => { if (!r) return r; const o = idx.map(i => r[i]); for (const k of ['cls', 'rid', 'auto', 'ref', 'ro', 'pdf', 'pid']) if (r[k] !== undefined) o[k] = r[k]; return o; };
     let groups = null;
     if (rep.groups) { groups = []; let i = 0; for (const [l, n, c] of rep.groups) { const m = idx.filter(j => j >= i && j < i + n).length; if (m) groups.push([l, m, c]); i += n; } }
     return Object.assign({}, rep, { cols: idx.map(i => rep.cols[i]), rows: rep.rows.map(pick), foot: pick(rep.foot), groups });
@@ -2476,7 +2476,7 @@
     // portal logins travel encrypted; the file is useless for them without the master password
     if (V.doc) data.vault = V.doc;
     data.credentials = Array.from(V.creds.entries()).map(([id, d]) => Object.assign({ id }, d));
-    if (window.OFVat) { try { data.vatInvoices = await window.OFVat.allChunks(); data.vatFiles = await window.OFVat.allFiles(); } catch (e) { return toast('تعذّر تجميع فواتير الإقرارات للنسخة الاحتياطية. حاول مرة أخرى.', true); } }
+    if (window.OFVat) { try { data.vatInvoices = await window.OFVat.allChunks(); data.vatFiles = await window.OFVat.allFiles(); if (window.OFVat.allDocs) data.vatDocs = await window.OFVat.allDocs(); } catch (e) { return toast('تعذّر تجميع فواتير الإقرارات للنسخة الاحتياطية. حاول مرة أخرى.', true); } }
     data.source = window.OF_LOCAL ? 'device' : 'claude.ai';
     await saveFile('نسخة احتياطية - ' + fileName(settings().officeName || 'المكتب') + ' - ' + C.todayISO() + '.json', new Blob([JSON.stringify(data)], { type: 'application/json' }));
     try { localStorage.setItem('of-last-backup', new Date().toISOString()); } catch (e) {}
@@ -2489,7 +2489,7 @@
       if (!d || d.app !== 'accounting-office') return toast('هذا الملف ليس نسخة احتياطية من هذا البرنامج.', true);
       const n = COLS.reduce((s, c) => s + (Array.isArray(d[c]) ? d[c].length : 0), 0);
       const cnt = (k) => Array.isArray(d[k]) ? d[k].length : 0;
-      const total = n + cnt('vatInvoices') + cnt('vatFiles') + cnt('credentials') + (d.settings ? 1 : 0) + (d.vault ? 1 : 0);
+      const total = n + cnt('vatInvoices') + cnt('vatFiles') + cnt('vatDocs') + cnt('credentials') + (d.settings ? 1 : 0) + (d.vault ? 1 : 0);
       const bg = modal('استرجاع نسخة احتياطية', '<p style="margin:0 0 8px">' + (d.exportedAt ? 'نسخة بتاريخ ' + esc(String(d.exportedAt).replace('T', ' ').slice(0, 16)) + (d.source ? ' من ' + (d.source === 'device' ? 'نسخة الجهاز' : 'claude.ai') : '') + '. ' : '') + 'تحتوي على:</p>' +
         '<div class="kv"><span>العملاء</span><span>' + int(cnt('clients')) + '</span><span>الحركات المالية</span><span>' + int(cnt('transactions')) + '</span><span>الإجراءات</span><span>' + int(cnt('tasks')) + '</span><span>العقود</span><span>' + int(cnt('contracts')) + '</span><span>الشهادات</span><span>' + int(cnt('certificates')) + '</span><span>إقرارات القيمة المضافة</span><span>' + int(cnt('vatReturns')) + '</span></div>' +
         '<p style="margin:10px 0 0">السجلات التي تحمل المعرّف نفسه تُستبدل، وتبقى بقية البيانات كما هي.</p><p class="hint" id="ib-prog" style="margin:6px 0 0"></p>',
@@ -2504,6 +2504,7 @@
           if (d.settings) await db.doc('meta/settings').set(clean(d.settings));
           if (d.vault && d.vault.wrapped) await db.doc('vault/main').set(clean(d.vault));
           for (const r of d.vatFiles || []) { if (!r || !r.id) continue; const { id, ...rest } = r; await db.doc('vatFiles/' + id).set(clean(rest)); }
+          for (const r of d.vatDocs || []) { if (!r || !r.id) continue; const { id, ...rest } = r; await db.doc('vatDocs/' + id).set(clean(rest)); }
           for (const r of d.vatInvoices || []) { if (!r || !r.id) continue; const { id, ...rest } = r; await db.doc('vatInvoices/' + id).set(clean(rest)); }
           for (const r of d.credentials || []) { if (!r || !r.id || !r.data) continue; const { id, ...rest } = r; await db.doc('credentials/' + id).set(clean(rest)); }
         });

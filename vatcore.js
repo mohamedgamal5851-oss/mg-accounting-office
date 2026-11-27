@@ -519,7 +519,40 @@
     return { rows, periodOk, ok: periodOk && rows.every(r => r.ok || (typed && !r.strict && !r.isCount)) };
   }
 
-  const API = { normNo, ID_LIMIT, isExp, vatLines, inReturn, r2, r5, num, toLatin, isoDate, dotDate, periodBounds, quarterEnd, snapRate, defaultLine, invKey, invTotals, isServiceText, serviceWord, itemKey, readWorkbook, issues, cleanNo,
+  /* an e-invoice PDF from the portal: what is needed to find its invoice — the electronic number (UUID, also the
+     file's title), the registration numbers, the dates (yyyy/mm/dd), the amounts and the plain numbers in its text */
+  function parseEInvoice(text, title, fileName) {
+    const t = toLatin(String(text || '')), uniq = (a) => Array.from(new Set(a));
+    const out = { uuid: '', regs: [], dates: [], amounts: [], nums: [], base: String(fileName || '').replace(/\.pdf$/i, '').trim() };
+    const tm = String(title || '').match(/^([0-9A-Z]{20,32})(?:_|$)/), um = t.match(/\b(?=[0-9A-Z]*[A-Z])(?=[0-9A-Z]*\d)[0-9A-Z]{26}\b/);
+    out.uuid = tm ? tm[1] : um ? um[0] : '';
+    out.regs = uniq(t.match(/\b\d{14}\b|\b\d{9}\b/g) || []);
+    for (const d of t.matchAll(/\b(\d{4})\/(\d{1,2})\/(\d{1,2})\b/g)) out.dates.push(d[1] + '-' + pad2(d[2]) + '-' + pad2(d[3]));
+    out.dates = uniq(out.dates);
+    // amounts as the portal writes them: 1,234.56 or 1.234,56 or 300,00 (a two-digit end is the decimals)
+    for (const a of t.match(/\d[\d.,]*\d/g) || []) {
+      const m = a.match(/^(.*)[.,](\d{2})$/); if (!m) continue;
+      const v = Number(m[1].replace(/[.,]/g, '') + '.' + m[2]); if (isFinite(v)) out.amounts.push(r2(v));
+    }
+    out.amounts = uniq(out.amounts);
+    out.nums = uniq(t.match(/\d+/g) || []);
+    return out;
+  }
+  /* how well an invoice fits an e-invoice PDF (7 or more is a match) */
+  function scoreEInvoice(info, inv) {
+    if (info.uuid && inv.uuid && info.uuid === inv.uuid) return 100;
+    const dig = (x) => String(x || '').replace(/\D/g, ''), nos = [dig(inv.no), dig(inv.noOrig)].filter(Boolean);
+    let sc = 0;
+    const base = String(info.base || '').toUpperCase();
+    if (nos.length && (nos.includes(dig(base)) && /^\D*\d+\D*$/.test(base) || (inv.noOrig && base === String(inv.noOrig).toUpperCase()))) sc += 4;
+    if (nos.some(n => info.nums.includes(n))) sc += 3;
+    const cp = inv.reg || inv.nid; if (cp && info.regs.includes(cp)) sc += 3;
+    if (inv.date && info.dates.includes(inv.date)) sc += 2;
+    const tt = invTotals(inv), tot = r2(tt.net + tt.vat + (Number(inv.tbl) || 0));
+    if (info.amounts.some(a => Math.abs(a - tot) < 0.02 || Math.abs(a - r2(tt.net)) < 0.02)) sc += 2;
+    return sc;
+  }
+  const API = { parseEInvoice, scoreEInvoice, normNo, ID_LIMIT, isExp, vatLines, inReturn, r2, r5, num, toLatin, isoDate, dotDate, periodBounds, quarterEnd, snapRate, defaultLine, invKey, invTotals, isServiceText, serviceWord, itemKey, readWorkbook, issues, cleanNo,
     RATE_ROWS, IN_ROWS, compute, breakdown, lineKind, normalizeNote, BR_S, BR_P, BR_V, uploadSheet, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, parseFormFields, reconcile, VALID_REG, norm };
   if (typeof module === 'object' && module.exports) module.exports = API; else root.OFVatCore = API;
 })(typeof window !== 'undefined' ? window : this);
