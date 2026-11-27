@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-27 06:26">
+<meta name="of-build" content="2026-11-27 06:34">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -134,6 +134,19 @@ table.grouped thead tr.grp + tr th { top: 30px; }
 @media (max-width: 900px) { .br-wrap { grid-template-columns: 1fr; } }
 .pdf-doc table.grouped thead tr.grp th { background: #fff; color: #1c1c1c; border-bottom: 1.5px solid #2b2b2b; text-align: center; }
 .pdf-doc .br-wrap { grid-template-columns: 1fr 1fr; gap: 14px; }
+/* old returns */
+.hstep header { gap: 10px; } .hnum { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); display: inline-grid; place-items: center; font-weight: 700; font-size: 13px; flex: none; }
+.hform { grid-template-columns: repeat(4, minmax(160px, 1fr)); }
+@media (max-width: 900px) { .hform { grid-template-columns: 1fr 1fr; } }
+.hist-tbl input.hin { width: 96px; padding: 5px 7px; font-variant-numeric: tabular-nums; } .hist-tbl input.hno { width: 84px; } .hist-tbl input.hdate { width: 132px; } .hist-tbl th, .hist-tbl td { padding-inline: 6px; }
+.hist-tbl td { vertical-align: middle; } .hist-tbl td.hres { min-width: 150px; white-space: normal; }
+.hist-tbl tr.h-ok td:first-child { box-shadow: inset -3px 0 0 var(--ok); } .hist-tbl tr.h-bad td:first-child { box-shadow: inset -3px 0 0 var(--crit); } .hist-tbl tr.h-acc td:first-child { box-shadow: inset -3px 0 0 var(--warn); }
+.hist-tbl tr.hx td { color: var(--muted); background: var(--bg); }
+.hhint { font-size: 11.5px; color: var(--muted); margin-top: 2px; line-height: 1.5; max-width: 260px; }
+.hsum { display: flex; flex-wrap: wrap; gap: 18px; font-size: 15px; margin-bottom: 10px; } .hopts { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+label.inl input.hin { width: 130px; }
+.ret-locked [data-vat-set], .ret-locked [data-vat-sel], .ret-locked [data-vat-selall], .ret-locked [data-vat-bulk], .ret-locked #vat-prev { pointer-events: none; opacity: .55; }
+.hm-accepted { background: var(--ok-soft); color: var(--ok); }
 .to-mods { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 2px 8px 2px 4px; margin-inline-start: -8px; transition: background .2s, color .2s; }
 .to-mods:hover, .to-mods:focus-visible { background: var(--accent-soft); color: var(--accent); }
 .to-mods-ic { display: inline-grid; place-items: center; width: 0; overflow: hidden; opacity: 0; transition: width .2s, opacity .2s; }

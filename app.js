@@ -260,7 +260,7 @@
     const A = S.M && S.M.alerts;
     const vd = page === 'vat' && window.OFVat && window.OFVat.dueSummary ? window.OFVat.dueSummary() : null;
     const badge = { tasks: A ? A.overdue.length : 0, 'vat-due': vd ? vd.nLate : 0 }, badgeTip = { tasks: 'إجراءات متأخرة', 'vat-due': 'إقرارات متأخرة السداد' };
-    const on = (k) => page === 'vat' ? (k === 'vat-rep' ? /^rep/.test(cp.sub) : k === 'vat-due' ? /^due/.test(cp.sub) : k === 'vat-parties' ? /^parties/.test(cp.sub) : k === 'vat-list' ? /^(list|ret)/.test(cp.sub) : k === 'vat' && !cp.sub) : (page === k || (page === 'client' && k === 'clients'));
+    const on = (k) => page === 'vat' ? (k === 'vat-rep' ? /^rep/.test(cp.sub) : k === 'vat-due' ? /^due/.test(cp.sub) : k === 'vat-parties' ? /^parties/.test(cp.sub) : k === 'vat-list' ? /^(list|ret|hist)/.test(cp.sub) : k === 'vat' && !cp.sub) : (page === k || (page === 'client' && k === 'clients'));
     const items = (mod ? mod.nav : MODULES.filter(modVisible).map(m => [modHome(m), m.name, m.icon])).filter(([k]) => navVisible(k));
     $('#nav').innerHTML = '<a href="#home" class="apps' + (page === 'home' ? ' on' : '') + '">' + svgIcon('apps') + '<span>' + (mod ? 'جميع الأقسام' : 'الأقسام') + '</span></a>' +
       (mod ? '<div class="nav-mod">' + esc(mod.name) + '</div>' : '') +

@@ -425,7 +425,9 @@
       if (c.pRelease || sub.counts.pRelease) rows.push({ label: 'عدد أذون الإفراج', mine: c.pRelease, theirs: sub.counts.pRelease, ok: c.pRelease === sub.counts.pRelease, isCount: 1 });
     }
     const periodOk = !sub.from || !ret || (sub.from === ret.from && sub.to === ret.to);
-    return { rows, periodOk, ok: periodOk && rows.every(r => r.ok) };
+    // figures typed by hand (no numbers read from a PDF) are matched on the summary only
+    const typed = !(sub.numbers && sub.numbers.length);
+    return { rows, periodOk, ok: periodOk && rows.every(r => r.ok || (typed && !r.strict && !r.isCount)) };
   }
 
   const API = { normNo, ID_LIMIT, isExp, vatLines, inReturn, r2, r5, num, toLatin, isoDate, dotDate, periodBounds, quarterEnd, snapRate, defaultLine, invKey, invTotals, isServiceText, readWorkbook, issues, cleanNo,

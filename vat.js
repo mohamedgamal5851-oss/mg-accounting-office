@@ -8,7 +8,7 @@
   const { S, C, $, $$, esc, uid, money, int, clean, toast, write, modal, closeModal, confirmBox, fld, inp, val, options, topBar, actBtn } = A;
 
   const VS = { cache: new Map(), timers: new Map(), saving: 0, err: '', sel: new Set(), selRet: '', undo: new Map(), dueSel: new Set(), memo: { of: null, res: new Map() } };
-  const STATUS = { draft: ['مسودة', 'mute'], ready: ['جاهز للتقديم', 'info'], submitted: ['مقدَّم', 'acc'], matched: ['مقدَّم ومطابق', 'ok'], diff: ['مقدَّم وبه فروق', 'crit'] };
+  const STATUS = { draft: ['مسودة', 'mute'], ready: ['جاهز للتقديم', 'info'], submitted: ['مقدَّم', 'acc'], matched: ['مقدَّم ومطابق', 'ok'], accepted: ['مطابق بفرق مقبول', 'ok'], diff: ['مقدَّم وبه فروق', 'crit'] };
   const FREQ = { monthly: 'شهري', quarterly: 'ربع سنوي' };
   const S_DT = [[1, 'فاتورة'], [2, 'إشعار إضافة'], [3, 'إشعار خصم (إشعار دائن)'], [5, 'مستهلك نهائي محلي'], [6, 'جهة حكومية'], [7, 'مستهلك نهائي أجنبي (طبيعي)'], [8, 'مستهلك نهائي أجنبي (اعتباري)']];
   const P_DT = [[1, 'فاتورة'], [2, 'إشعار إضافة'], [3, 'إشعار خصم (إشعار دائن)'], [4, 'إذن إفراج جمركي']];
@@ -27,7 +27,7 @@
   const periodLabel = (r) => r.freq === 'quarterly' ? 'الربع المنتهي ' + A.monthLabel(r.period) : A.monthLabel(r.period);
   const partyDoc = (cid) => (S.raw.vatParties || []).find(p => p.id === cid) || { id: cid, map: {} };
   const memFor = (cid) => { const m = partyDoc(cid).map || {}; return (side, key) => m[side + ':' + key] || null; };
-  const statusOf = (r) => r.sub ? (r.sub.ok ? 'matched' : 'diff') : (r.status || 'draft');
+  const statusOf = (r) => r.sub ? (r.sub.ok ? 'matched' : r.sub.accepted ? 'accepted' : 'diff') : (r.status || 'draft');
   const pill = (k) => '<span class="pill ' + STATUS[k][1] + '">' + esc(STATUS[k][0]) + '</span>';
 
   function prevReturn(r) {
@@ -154,6 +154,7 @@
     if (p[0] === 'parties') return { view: 'parties' };
     if (p[0] === 'list') return { view: 'list' };
     if (p[0] === 'due') return { view: 'due', client: p.slice(1).join('-') };
+    if (p[0] === 'hist') return { view: 'hist' };
     return { view: 'dash' };
   }
   function page(sub) {
@@ -164,6 +165,7 @@
     if (r.view === 'parties') return pageParties();
     if (r.view === 'list') return pageList();
     if (r.view === 'due') return pageDue(r.client);
+    if (r.view === 'hist') return pageHist();
     return pageDash();
   }
   function bind(sub) {
@@ -171,6 +173,7 @@
     if (r.view === 'ret') bindRet(r.id, r.tab);
     if (r.view === 'parties') bindParties();
     if (r.view === 'due' && !r.client) bindDue();
+    if (r.view === 'hist') bindHist();
   }
 
   /* ---------------- dashboard ---------------- */
@@ -255,7 +258,7 @@
     h += '<div class="tiles">' +
       '<a class="tile c2" href="#vat-due"><span>ضريبة مستحقة لم تُسدَّد</span><b>' + money(unpaid.reduce((a, x) => a + x.left, 0)) + '</b><small>' + int(unpaid.length) + ' إقرار' + (unpaid.some(x => x.late > 0) ? ' · ' + int(unpaid.filter(x => x.late > 0).length) + ' متأخر السداد' : '') + '</small></a>' +
       '<div class="tile c3"><span>أرصدة دائنة مرحّلة</span><b>' + money(cred) + '</b><small>' + int(latest.filter(r => resOf(r) < 0).length) + ' شركة</small></div>' +
-      '<a class="tile c4" href="#vat-list"><span>مقدَّمة ومطابقة · ' + esc(y) + '</span><b>' + int(yr.filter(r => statusOf(r) === 'matched').length) + '</b><small>' + int(yr.filter(r => statusOf(r) === 'diff').length) + ' فيها فروق</small></a>' +
+      '<a class="tile c4" href="#vat-list"><span>مقدَّمة ومطابقة · ' + esc(y) + '</span><b>' + int(yr.filter(r => /^(matched|accepted)$/.test(statusOf(r))).length) + '</b><small>' + int(yr.filter(r => statusOf(r) === 'diff').length) + ' فيها فروق</small></a>' +
       '<div class="tile c5"><span>فواتير عليها ملاحظات لازمة</span><b>' + int(crit) + '</b><small>في ' + int(all.filter(r => r.sum && r.sum.crit).length) + ' إقرار</small></div></div>';
 
     // 3) companies × months
@@ -564,17 +567,257 @@
     return h + '</div></section>';
   }
 
+  /* ---------------- old returns (الإقرارات القديمة) ----------------
+     Returns that were already submitted on the tax returns system before the office used this program: the e-invoice
+     portal's sheets are split by invoice date into the periods, the submitted figures are typed, pasted, or read from the
+     returns' PDFs, each period is matched, and the returns are saved as submitted (locked when they match). */
+  const H = () => VS.hist || (VS.hist = { client: '', freq: 'monthly', from: '', to: '', invs: [], files: [], figs: {}, pdf: {}, opening: '', accept: {}, paid: true, lock: true, busy: false });
+  const hNum = (v) => v === '' || v == null ? null : C.round2(String(v).replace(/[^\d.\-]/g, ''));
+  function histPeriods(h) {
+    if (!h.client || !/^\d{4}-\d{2}$/.test(h.from) || !/^\d{4}-\d{2}$/.test(h.to) || h.from > h.to) return [];
+    const out = []; let p = h.from;
+    while (p <= h.to && out.length < 72) { const per = h.freq === 'quarterly' ? V.quarterEnd(p) : p; if (!out.includes(per)) out.push(per); p = C.addMonths(p, 1); }
+    return out;
+  }
+  const histPer = (h, date) => { const ym = String(date || '').slice(0, 7); if (!ym || ym < h.from || ym > h.to) return null; return h.freq === 'quarterly' ? V.quarterEnd(ym) : ym; };
+  function histModel(h) {
+    const pers = histPeriods(h), by = new Map(pers.map(p => [p, []]));
+    let outside = 0;
+    for (const inv of h.invs) { const p = histPer(h, inv.date); if (p && by.has(p)) by.get(p).push(inv); else outside++; }
+    const before = pers.length ? rets().filter(r => r.client === h.client && r.period < pers[0]).sort((a, b) => b.period.localeCompare(a.period))[0] : null;
+    const f0 = h.figs[pers[0]] || {};
+    // the credit carried into the first period: the return before it, or the opening credit (by default the first return's own figure)
+    let carry = before ? Math.max(0, -resultOf(retFor(h.client, before.period))) : hNum(h.opening) != null ? hNum(h.opening) : hNum(f0.prev) || 0;
+    const rows = pers.map(per => {
+      const ex = retFor(h.client, per);
+      if (ex) {
+        const res = resultOf(ex); const x = { per, ex, invs: by.get(per), prevIn: carry, res };
+        carry = res < 0 ? -res : 0; return x;
+      }
+      const invs = by.get(per), calc = V.compute(invs, carry), f = h.figs[per] || {};
+      const has = ['out', 'inp', 'res'].some(k => hNum(f[k]) != null);
+      let theirs = null;
+      if (has) {
+        const out = hNum(f.out) || 0, inp = hNum(f.inp) || 0, prev = hNum(f.prev) != null ? hNum(f.prev) : calc.prev, due = V.r2(out - inp);
+        theirs = { out, inp, due, prev, res: hNum(f.res) != null ? hNum(f.res) : V.r2(due - prev) };
+      }
+      const d = theirs ? { out: V.r2(theirs.out - calc.out), inp: V.r2(theirs.inp - calc.inp), prev: V.r2(theirs.prev - calc.prev), res: V.r2(theirs.res - calc.res) } : null;
+      const ok = !!d && Object.values(d).every(v => Math.abs(v) < 0.015);
+      const res = theirs ? theirs.res : calc.res;
+      carry = res < 0 ? -res : 0;
+      return { per, invs, calc, f, theirs, d, ok, res, nS: invs.filter(i => i.side === 'S').length, nP: invs.filter(i => i.side === 'P').length };
+    });
+    rows.forEach((x, i) => { x.hint = histHint(rows, i); });
+    return { pers, rows, outside, before };
+  }
+  function histHint(rows, i) {
+    const x = rows[i]; if (!x.d || x.ok) return '';
+    const d = x.d, nx = rows[i + 1] && rows[i + 1].d, pv = rows[i - 1] && rows[i - 1].d, cancels = (a, b) => b != null && Math.abs(a + b) < 1;
+    if (Object.values(d).every(v => Math.abs(v) < 1)) return 'فرق كسور';
+    const out = [];
+    if (Math.abs(d.prev) >= 1) out.push('الرصيد السابق مختلف: راجع الفترة اللي قبلها أو الرصيد الافتتاحي');
+    if (d.out >= 1) out.push('المقدَّم فيه ضريبة مبيعات أكتر بـ ' + money(d.out) + ': غالبًا مبيعات مستهلك نهائي أو خارج البوابة');
+    if (d.out <= -1) out.push('الشيت فيه ضريبة مبيعات أكتر بـ ' + money(-d.out) + ': فواتير اتلغت أو اتسجلت بعد التقديم');
+    if (d.inp <= -1) out.push(cancels(d.inp, nx && nx.inp) ? 'مدخلات ' + money(-d.inp) + ' اتخصمت في إقرار الفترة اللي بعدها' : 'مدخلات في الشيت بـ ' + money(-d.inp) + ' ماتخصمتش في الإقرار');
+    if (d.inp >= 1) out.push(cancels(d.inp, pv && pv.inp) ? 'مدخلات ' + money(d.inp) + ' من الفترة اللي قبلها اتخصمت هنا' : 'المقدَّم فيه مدخلات أكتر بـ ' + money(d.inp) + ': فواتير ورقية أو جمركية مش في البوابة');
+    return out.join(' · ');
+  }
+  function histSetClient(cid) {
+    const h = H(), c = client(cid);
+    h.client = cid; h.invs = []; h.files = []; h.figs = {}; h.pdf = {}; h.opening = ''; h.accept = {};
+    if (!c) return;
+    h.freq = A.lawOf(c) === '6-2025' ? 'quarterly' : 'monthly';
+    const first = rets().filter(r => r.client === cid).map(r => r.period).sort()[0];
+    h.to = first ? C.addMonths(first, -1) : payCfg().from ? C.addMonths(payCfg().from, -1) : C.addMonths(S.M.ym, -1);
+    h.from = h.to.slice(0, 4) + '-01';
+  }
+
+  function pageHist() {
+    const h = H(), c = client(h.client), w = A.writable();
+    let o = topBar('الإقرارات القديمة', 'إضافة إقرارات اتقدمت قبل استخدام البرنامج: من شيتات بوابة الفاتورة الإلكترونية، ومطابقتها مع الإقرارات المقدَّمة', '<a class="btn" href="#vat-list">رجوع للإقرارات</a>') + '<div class="content hist">';
+    if (!w) return o + '<div class="card"><div class="empty">هذه الصفحة تحتاج صلاحية التعديل على الإقرارات.</div></div></div>';
+    const step = (n, t, hint, body) => '<section class="card hstep"><header><span class="hnum">' + n + '</span><h2>' + esc(t) + '</h2>' + (hint ? '<span class="hint">' + hint + '</span>' : '') + '</header><div class="body">' + body + '</div></section>';
+    const vatCl = S.M.clients.filter(x => x.status !== 'inactive').map(x => [x.id, (x.code ? x.code + ' · ' : '') + x.name]);
+    o += step('١', 'الشركة والفترة', 'كل فترة ليها إقرار في البرنامج هتظهر «موجود» ومش هتتغير', '<div class="form hform">' +
+      fld('h-client', 'الشركة', '<select id="h-client" data-h="client">' + options(vatCl, h.client, 'اختر الشركة…') + '</select>') +
+      fld('h-freq', 'دورية الإقرارات في الفترة دي', '<select id="h-freq" data-h="freq"' + (c ? '' : ' disabled') + '>' + options([['monthly', 'شهري'], ['quarterly', 'ربع سنوي']], h.freq) + '</select>') +
+      fld('h-from', 'من شهر', inp('h-from', h.from, 'month', ' data-h="from"' + (c ? '' : ' disabled'))) + fld('h-to', 'إلى شهر', inp('h-to', h.to, 'month', ' data-h="to"' + (c ? '' : ' disabled'))) + '</div>');
+    const m = histModel(h);
+    if (!c || !m.pers.length) return o + '</div>';
+    const nIn = h.invs.length - m.outside;
+    o += step('٢', 'شيتات بوابة الفاتورة الإلكترونية', 'ارفع ملف الفواتير المرسلة والمستلمة (ممكن أكتر من ملف، ولكل الشهور مرة واحدة)',
+      '<div class="toolbar"><label class="btn primary" for="h-files">⤒ رفع الشيتات</label><input type="file" id="h-files" multiple accept=".xlsx,.xls,.csv" hidden>' +
+      (h.files.length ? '<button type="button" class="btn sm" data-act="vat-hist-clear">مسح الشيتات</button>' : '') + '<span class="grow"></span>' +
+      (h.files.length ? '<span class="hint">' + h.files.map(f => esc(f.name) + ' (' + int(f.n) + ')').join(' · ') + '</span>' : '') + '</div>' +
+      (h.files.length ? '<div class="note info" style="margin-top:10px">' + int(nIn) + ' مستند داخل الفترة اتوزعوا على ' + int(m.rows.filter(x => !x.ex && x.invs.length).length) + ' ' + (h.freq === 'quarterly' ? 'ربع' : 'شهر') + ' حسب تاريخ الإصدار' + (m.outside ? ' · ' + int(m.outside) + ' مستند تاريخه خارج الفترة (مش هيتضاف)' : '') + '</div>' : ''));
+
+    // 3: submitted figures and the match, one row per period
+    const z = (v) => v == null || v === '' ? '' : String(v);
+    const cell = (per, k, v, ph, type) => '<input id="hf-' + per + '-' + k + '" data-hf="' + per + '|' + k + '" value="' + esc(z(v)) + '"' + (type === 'date' ? ' type="date"' : ' inputmode="decimal"') + (ph != null && ph !== '' ? ' placeholder="' + esc(ph) + '"' : '') + ' class="hin' + (type ? ' h' + type : '') + '">';
+    let t = '<table class="vat-tbl grouped hist-tbl"><thead><tr class="grp"><th></th><th colspan="3" class="g">حسب الشيتات</th><th colspan="6" class="g">الإقرار المقدَّم</th><th colspan="2"></th></tr><tr>' +
+      '<th>الفترة</th><th class="n">ض. المبيعات</th><th class="n">ض. المدخلات</th><th class="n">الصافي</th>' +
+      '<th>ض. المبيعات</th><th>ض. المدخلات</th><th>الرصيد السابق</th><th title="موجب = مستحق السداد، سالب = رصيد دائن">الصافي ±</th><th>رقم الإقرار</th><th>تاريخ التقديم</th><th>النتيجة</th><th>فرق مقبول</th></tr></thead><tbody>';
+    for (const x of m.rows) {
+      const lbl = esc(h.freq === 'quarterly' ? 'الربع المنتهي ' + A.monthLabel(x.per) : A.monthLabel(x.per));
+      if (x.ex) {
+        t += '<tr class="hx"><td><a href="#vat-ret-sum-' + x.ex.id + '">' + lbl + '</a></td><td colspan="9"><span class="pill mute">موجود في البرنامج</span> ' + pill(statusOf(x.ex)) + ' <span class="hint">الصافي ' + money(x.res) + (x.invs.length ? ' · ' + int(x.invs.length) + ' مستند من الشيت لن يُضاف هنا' : '') + '</span></td><td colspan="2"></td></tr>';
+        continue;
+      }
+      const sres = x.calc.res, f = x.f;
+      const resCell = !x.theirs ? '<span class="hint">—</span>' : x.ok ? '<span class="match-ok">✓ مطابق</span>' :
+        '<span class="match-bad">✗ فرق ' + money(x.d.res) + '</span>' + (x.hint ? '<div class="hhint">' + esc(x.hint) + '</div>' : '');
+      t += '<tr class="' + (x.theirs ? (x.ok ? 'h-ok' : h.accept[x.per] ? 'h-acc' : 'h-bad') : '') + '"><td>' + lbl + (h.pdf[x.per] ? ' <span class="iss info" title="' + esc(h.pdf[x.per].name) + '">PDF</span>' : '') + '<div class="hhint">' + (x.invs.length ? int(x.nS) + ' بيع · ' + int(x.nP) + ' شراء' : 'لا توجد مستندات') + '</div></td>' +
+        '<td class="n">' + money(x.calc.out) + '</td><td class="n">' + money(x.calc.inp) + '</td><td class="n">' + money(sres) + '</td>' +
+        '<td>' + cell(x.per, 'out', f.out) + '</td><td>' + cell(x.per, 'inp', f.inp) + '</td><td>' + cell(x.per, 'prev', f.prev, x.calc.prev ? grp(x.calc.prev) : '0') + '</td>' +
+        '<td>' + cell(x.per, 'res', f.res, x.theirs ? grp(V.r2(x.theirs.due - x.theirs.prev)) : '') + '</td><td>' + cell(x.per, 'no', f.no, '', 'no') + '</td><td>' + cell(x.per, 'date', f.date, '', 'date') + '</td>' +
+        '<td class="hres">' + resCell + '</td><td>' + (x.theirs && !x.ok ? '<input type="checkbox" data-hacc="' + x.per + '"' + (h.accept[x.per] ? ' checked' : '') + ' title="اعتماد الفرق كمقبول">' : '') + '</td></tr>';
+    }
+    t += '</tbody></table>';
+    const showOpen = !m.before;
+    o += step('٣', 'أرقام الإقرارات المقدَّمة والمطابقة', 'اكتبها من الإقرار، أو الصقها من Excel، أو ارفع ملفات الإقرارات PDF',
+      '<div class="toolbar"><label class="btn" for="h-pdfs">⤒ رفع ملفات الإقرارات PDF</label><input type="file" id="h-pdfs" multiple accept=".pdf" hidden><button type="button" class="btn" data-act="vat-hist-paste">📋 لصق من Excel</button>' +
+      '<button type="button" class="btn" data-act="vat-hist-copy" title="للفترات الفاضية: اكتب أرقام النظام في خانات المقدَّم">نسخ أرقام النظام للخانات الفاضية</button><span class="grow"></span>' +
+      (showOpen ? '<label class="inl">الرصيد الدائن قبل أول فترة <input id="h-open" data-hopen value="' + esc(z(h.opening)) + '" inputmode="decimal" class="hin" placeholder="' + esc(grp(hNum((h.figs[m.pers[0]] || {}).prev) || 0)) + '"></label>' : '<span class="hint">الرصيد السابق لأول فترة من إقرار ' + esc(periodLabel(m.before)) + '</span>') + '</div>' +
+      '<div class="tablewrap" style="margin-top:10px">' + t + '</div>');
+
+    const todo = m.rows.filter(x => !x.ex && (x.invs.length || x.theirs));
+    const nOk = todo.filter(x => x.ok).length, nAcc = todo.filter(x => x.theirs && !x.ok && h.accept[x.per]).length, nBad = todo.filter(x => x.theirs && !x.ok && !h.accept[x.per]).length, nNo = todo.filter(x => !x.theirs).length;
+    o += step('٤', 'الحفظ', '', '<div class="hsum"><span class="match-ok">✓ ' + int(nOk) + ' مطابق</span>' + (nAcc ? '<span>' + int(nAcc) + ' فرق مقبول</span>' : '') + (nBad ? '<span class="match-bad">✗ ' + int(nBad) + ' فيه فرق</span>' : '') + (nNo ? '<span class="hint">' + int(nNo) + ' من غير أرقام مقدَّمة</span>' : '') + '</div>' +
+      '<div class="hopts"><label class="inl"><input type="checkbox" data-hopt="paid"' + (h.paid ? ' checked' : '') + '> اعتبار الضريبة المستحقة في الفترات دي مسددة (اتسددت قبل استخدام البرنامج)</label>' +
+      '<label class="inl"><input type="checkbox" data-hopt="lock"' + (h.lock ? ' checked' : '') + '> قفل الإقرارات المطابقة والمقبولة من التعديل</label></div>' +
+      '<div class="toolbar"><button type="button" class="btn primary" data-act="vat-hist-save"' + (todo.length && !h.busy ? '' : ' disabled') + '>' + (h.busy ? 'جارٍ الحفظ…' : 'حفظ ' + int(todo.length) + ' إقرار') + '</button>' +
+      '<span class="hint">الإقرارات بتتحفظ «مقدَّمة» برقمها وتاريخها، والرصيد الدائن بيترحّل من الأرقام المقدَّمة.</span></div>');
+    return o + '</div>';
+  }
+  function bindHist() {
+    const h = H();
+    $$('[data-h]').forEach(el => el.addEventListener('change', () => {
+      const k = el.dataset.h;
+      if (k === 'client') histSetClient(el.value); else h[k] = el.value;
+      A.renderPage();
+    }));
+    const later = (fn) => () => { fn(); setTimeout(() => { const a = document.activeElement; VS.histFocus = a && a.id && a.closest('.hist') ? a.id : ''; A.renderPage(); }, 0); };
+    $$('[data-hf]').forEach(el => el.addEventListener('change', later(() => {
+      const [per, k] = el.dataset.hf.split('|'); h.figs[per] = Object.assign({}, h.figs[per], { [k]: el.value.trim() });
+    })));
+    const op = $('[data-hopen]'); if (op) op.addEventListener('change', later(() => { h.opening = op.value.trim(); }));
+    $$('[data-hacc]').forEach(el => el.addEventListener('change', () => { h.accept[el.dataset.hacc] = el.checked; A.renderPage(); }));
+    $$('[data-hopt]').forEach(el => el.addEventListener('change', () => { h[el.dataset.hopt] = el.checked; }));
+    const fi = $('#h-files'); if (fi) fi.addEventListener('change', async () => { const fs = Array.from(fi.files); fi.value = ''; for (const f of fs) await histSheet(f); A.renderPage(); });
+    const pi = $('#h-pdfs'); if (pi) pi.addEventListener('change', async () => { const fs = Array.from(pi.files); pi.value = ''; await histPdfs(fs); A.renderPage(); });
+    if (VS.histFocus) { const el = document.getElementById(VS.histFocus); VS.histFocus = ''; if (el) { el.focus(); try { el.select(); } catch (e) {} } }
+  }
+  async function histSheet(file) {
+    const h = H();
+    let book; try { book = await readBook(file); } catch (e) { return toast((e && e.message) || 'تعذّر قراءة الملف.', true); }
+    const res = V.readWorkbook(book, memFor(h.client));
+    if (!res) return toast('«' + file.name + '»: صيغة غير معروفة. ارفع ملف الفواتير من بوابة الفاتورة الإلكترونية.', true);
+    const have = new Set(h.invs.map(V.invKey)); let n = 0;
+    for (const inv of res.invoices) { const k = V.invKey(inv); if (have.has(k)) continue; have.add(k); h.invs.push(inv); n++; }
+    h.files.push({ name: file.name, n });
+    toast('«' + file.name + '»: ' + int(n) + ' مستند');
+  }
+  async function readPdfFigures(file) {
+    const lib = await pdfLib(), bytes = new Uint8Array(await file.arrayBuffer());
+    const doc = await lib.getDocument({ data: bytes.slice() }).promise, pages = [];
+    for (let p = 1; p <= doc.numPages; p++) { const tc = await (await doc.getPage(p)).getTextContent(); pages.push(tc.items.map(i => i.str)); }
+    return { parsed: V.parseReturnPdf(pages), bytes };
+  }
+  async function histPdfs(files) {
+    const h = H(), pers = histPeriods(h); let got = 0; const miss = [];
+    toast('جارٍ قراءة ' + int(files.length) + ' ملف…');
+    for (const f of files) {
+      try {
+        const { parsed, bytes } = await readPdfFigures(f), s = parsed.summary;
+        const ym = String(parsed.to || '').slice(0, 7), per = ym ? (h.freq === 'quarterly' ? V.quarterEnd(ym) : ym) : '';
+        if (!s || !pers.includes(per)) { miss.push(f.name); continue; }
+        const z = (v) => v == null ? '' : String(v);
+        h.figs[per] = { out: z(s.out), inp: z(s.inp), prev: z(s.prev), res: z(s.res), no: parsed.formNo || '', date: parsed.sentDate || '' };
+        h.pdf[per] = { name: f.name, bytes }; got++;
+      } catch (e) { miss.push(f.name); }
+    }
+    toast('اتقرأ ' + int(got) + ' إقرار' + (miss.length ? ' · تعذّر ربط: ' + miss.join('، ') : ''), !!miss.length);
+  }
+  function parseMonthCell(v) {
+    const s = V.toLatin(String(v == null ? '' : v)).trim(), p2 = (x) => String(x).padStart(2, '0');
+    let m = s.match(/^(\d{4})[-\/.](\d{1,2})(?:[-\/.]\d{1,2})?$/); if (m) return m[1] + '-' + p2(m[2]);
+    m = s.match(/^\d{1,2}[-\/.](\d{1,2})[-\/.](\d{4})$/); if (m) return m[2] + '-' + p2(m[1]);
+    m = s.match(/^(\d{1,2})[-\/.](\d{4})$/); if (m) return m[2] + '-' + p2(m[1]);
+    const mi = A.MONTHS.findIndex(x => s.includes(x)), y = s.match(/\d{4}/);
+    return mi >= 0 && y ? y[0] + '-' + p2(mi + 1) : null;
+  }
+  function openHistPaste() {
+    const h = H();
+    const body = '<p style="margin:0 0 8px">انسخ من Excel صف لكل إقرار بالترتيب ده (أي عمود فاضي سيبه فاضي):</p><div class="note info" style="margin-bottom:8px">الشهر · ض. المبيعات · ض. المدخلات · الرصيد السابق · الصافي · رقم الإقرار · تاريخ التقديم</div>' +
+      '<textarea id="hp-text" style="min-height:200px;direction:ltr;text-align:left" placeholder="2026-01	15000	9000	0	6000	123456	2026-02-20"></textarea><div class="err" id="hp-err"></div>';
+    const bg = modal('لصق أرقام الإقرارات من Excel', body, '<button type="button" class="btn" data-close>إلغاء</button><button type="button" class="btn primary" id="hp-go">إدخال</button>', true);
+    $('#hp-go', bg).addEventListener('click', () => {
+      const pers = histPeriods(h); let n = 0; const bad = [];
+      for (const line of $('#hp-text', bg).value.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        const c = line.split('\t'), ym = parseMonthCell(c[0]), per = ym ? (h.freq === 'quarterly' ? V.quarterEnd(ym) : ym) : '';
+        if (!pers.includes(per)) { bad.push(c[0]); continue; }
+        const nm = (v) => v == null || String(v).trim() === '' ? '' : String(V.num(v));
+        const date = V.toLatin(String(c[6] || '').trim()), dm = date.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/);
+        h.figs[per] = { out: nm(c[1]), inp: nm(c[2]), prev: nm(c[3]), res: nm(c[4]), no: String(c[5] || '').trim(), date: dm ? dm[3] + '-' + dm[2].padStart(2, '0') + '-' + dm[1].padStart(2, '0') : date.slice(0, 10) };
+        n++;
+      }
+      if (!n) return ($('#hp-err', bg).textContent = 'مفيش صفوف اتقرت. أول عمود لازم يكون الشهر (مثلاً 2026-01 أو 01/2026) وداخل الفترة.');
+      closeModal(); A.renderPage(); toast('اتدخل ' + int(n) + ' إقرار' + (bad.length ? ' · اتجاهل: ' + bad.slice(0, 5).join('، ') : ''), !!bad.length);
+    });
+  }
+  function histCopySystem() {
+    const h = H(), m = histModel(h); let n = 0;
+    for (const x of m.rows) if (!x.ex && !x.theirs && x.invs.length) { h.figs[x.per] = Object.assign({}, h.figs[x.per], { out: String(x.calc.out), inp: String(x.calc.inp), prev: String(x.calc.prev), res: String(x.calc.res) }); n++; }
+    A.renderPage(); toast(n ? 'اتكتبت أرقام النظام في ' + int(n) + ' فترة · راجعها على الإقرارات المقدَّمة' : 'مفيش فترات فاضية فيها مستندات.');
+  }
+  async function saveHist() {
+    const h = H(), m = histModel(h), c = client(h.client);
+    if (!c || h.busy || !A.writable()) return;
+    const todo = m.rows.filter(x => !x.ex && (x.invs.length || x.theirs));
+    if (!todo.length) return toast('لا توجد فترات جديدة للحفظ.');
+    h.busy = true; A.renderPage();
+    let n = 0;
+    const ok = await write(async () => {
+      for (const x of todo) {
+        const b = V.periodBounds(x.per, h.freq), id = uid(), now = new Date().toISOString();
+        const rows = x.invs.map(inv => { const i = clean(inv); i.id = uid(); fixNo(i); return i; });
+        const r = { id, client: c.id, period: x.per, freq: h.freq, from: b.from, to: b.to, kind: 'original', status: 'submitted', hist: true, prevMode: 'auto',
+          prevCredit: x === todo[0] && !m.before ? x.calc.prev : 0, chunks: 0, keys: [], createdAt: now, updatedAt: now };
+        const parts = chunkRows(rows);
+        for (let k = 0; k < parts.length; k++) await S.db.doc('vatInvoices/' + id + '-' + k).set({ ret: id, k, rows: clean(parts[k]) });
+        r.chunks = parts.length; r.sum = summaryOf(r, rows); r.keys = rows.filter(i => i.side === 'P' && !i.x).map(V.invKey);
+        if (x.theirs) {
+          r.sub = { src: 'manual', formNo: x.f.no || '', sentDate: x.f.date || '', kind: 'original', from: b.from, to: b.to, parsed: { summary: x.theirs, counts: null, numbers: [] }, ok: x.ok, at: now };
+          if (!x.ok && h.accept[x.per]) r.sub.accepted = { note: x.hint || '', at: now };
+          r.locked = !!h.lock && (x.ok || !!h.accept[x.per]);
+        }
+        if (h.paid && x.res > 0) r.pay = [{ id: uid(), date: C.dueDate(vatOb(), x.per), amount: x.res, method: '', ref: '', note: 'إقرار قديم – اتسدد قبل استخدام البرنامج', at: now }];
+        await S.db.doc('vatReturns/' + id).set(clean(r));
+        const pdf = h.pdf[x.per];
+        if (pdf && r.sub) { const fc = await saveFileBytes(r, pdf.bytes, pdf.name, 0); if (fc) await S.db.doc('vatReturns/' + id).update({ sub: clean(Object.assign({}, r.sub, { viaPdf: true, file: pdf.name, fileChunks: fc, fileSize: pdf.bytes.length })) }); }
+        VS.cache.set(id, { rows, loaded: true });
+        const t = x.theirs && (S.raw.tasks || []).find(t => t.client === c.id && t.obligation === 'vat' && t.period === x.per && t.status !== 'done');
+        if (t) await S.db.doc('tasks/' + t.id).update({ status: 'done', doneDate: x.f.date || C.todayISO(), ref: x.f.no || t.ref || '' });
+        n++; toast('جارٍ الحفظ… ' + int(n) + ' / ' + int(todo.length));
+      }
+    });
+    h.busy = false;
+    if (ok) { toast('تم حفظ ' + int(n) + ' إقرار'); histSetClient(c.id); ui.rmClient = c.id; ui.rmYear = todo[0].per.slice(0, 4); A.go('vat-rep-months'); }
+    else A.renderPage();
+  }
+
   /* ---------------- list ---------------- */
   function pageList() {
     const all = rets(), years = Array.from(new Set(all.map(r => r.period.slice(0, 4)))).sort().reverse();
     const list = all.filter(r => (!ui.vClient || r.client === ui.vClient) && (!ui.vStatus || statusOf(r) === ui.vStatus) && (!ui.vYear || r.period.startsWith(ui.vYear)))
       .sort((a, b) => b.period.localeCompare(a.period) || A.clientName(a.client).localeCompare(A.clientName(b.client), 'ar'));
     const cnt = (k) => all.filter(r => statusOf(r) === k).length;
-    let h = topBar('إقرارات القيمة المضافة', 'نموذج 10 · من فواتير البيع والشراء إلى ملفات الرفع ثم مطابقة الإقرار المقدَّم', actBtn('vat-new', '+ إقرار جديد', 'primary')) + '<div class="content">';
+    let h = topBar('إقرارات القيمة المضافة', 'نموذج 10 · من فواتير البيع والشراء إلى ملفات الرفع ثم مطابقة الإقرار المقدَّم', (A.writable() ? '<a class="btn" href="#vat-hist">⤒ إقرارات قديمة</a>' : '') + actBtn('vat-new', '+ إقرار جديد', 'primary')) + '<div class="content">';
     h += '<div class="tiles">' +
       '<a class="tile c5" href="#" data-act="vat-filter" data-v="draft"><span>مسودات</span><b>' + int(cnt('draft')) + '</b><small>تحت الإعداد</small></a>' +
       '<a class="tile c4" href="#" data-act="vat-filter" data-v="ready"><span>جاهزة للتقديم</span><b>' + int(cnt('ready')) + '</b><small>نُزّلت ملفات الرفع</small></a>' +
-      '<a class="tile c3" href="#" data-act="vat-filter" data-v="matched"><span>مقدَّمة ومطابقة</span><b>' + int(cnt('matched')) + '</b><small>طابقت الإقرار المقدَّم</small></a>' +
+      '<a class="tile c3" href="#" data-act="vat-filter" data-v="matched"><span>مقدَّمة ومطابقة</span><b>' + int(cnt('matched') + cnt('accepted')) + '</b><small>طابقت الإقرار المقدَّم</small></a>' +
       '<a class="tile c2" href="#" data-act="vat-filter" data-v="diff"><span>مقدَّمة وبها فروق</span><b>' + int(cnt('diff')) + '</b><small>راجع المطابقة</small></a></div>';
     h += '<div class="toolbar"><select data-ui="vClient">' + options(A.clientOptions(true), ui.vClient, 'جميع الشركات') + '</select>' +
       '<select data-ui="vStatus">' + options(Object.entries(STATUS).map(([k, v]) => [k, v[0]]), ui.vStatus, 'جميع الحالات') + '</select>' +
@@ -644,7 +887,8 @@
       (A.writable() ? '<button type="button" class="btn primary" data-act="vat-import">⤒ استيراد ملف Excel</button><input type="file" id="vat-file" accept=".xlsx,.xls,.csv" hidden>' : '') +
       (S.downloads ? '<button type="button" class="btn" data-act="vat-pdf-sum" data-id="' + r.id + '">⤓ ملخص PDF</button>' : '') +
       (r.sub && r.sub.fileChunks ? '<button type="button" class="btn" data-act="vat-view-sub">📄 الإقرار المقدَّم</button>' : '') + actBtn('vat-del-ret', 'حذف الإقرار', 'danger', ' data-id="' + r.id + '"');
-    let h = topBar(c.name || '—', esc(periodLabel(r)) + ' · ' + esc(FREQ[r.freq]) + ' (' + esc(r.from) + ' ← ' + esc(r.to) + ') · ' + (r.kind === 'amended' ? 'معدل' : 'أصلي') + ' · ' + pill(statusOf(r)) + ' <span class="savestate" id="vat-save">' + esc(VS.saveText || '') + '</span>', actions) + '<div class="content">';
+    let h = topBar(c.name || '—', esc(periodLabel(r)) + ' · ' + esc(FREQ[r.freq]) + ' (' + esc(r.from) + ' ← ' + esc(r.to) + ') · ' + (r.kind === 'amended' ? 'معدل' : 'أصلي') + ' · ' + pill(statusOf(r)) + (r.locked ? ' <span class="pill mute">🔒 مقفول</span>' : '') + ' <span class="savestate" id="vat-save">' + esc(VS.saveText || '') + '</span>', actions) + '<div class="content' + (r.locked ? ' ret-locked' : '') + '">';
+    if (r.locked) h += '<div class="note info">🔒 الإقرار مقفول بعد المطابقة، فالفواتير والأرقام للعرض فقط.' + (A.writable() ? ' <a href="#" data-act="vat-lock" data-id="' + r.id + '" data-v="0">فتح القفل للتعديل</a>' : '') + '</div>';
     h += '<div class="tabs">' + TABS.map(([k, l]) => {
       const n = k === 'S' || k === 'P' ? rows.filter(i => i.side === k).length : 0, bad = k === 'S' || k === 'P' ? nCrit(k) : 0;
       return '<a href="#vat-ret-' + k + '-' + r.id + '" class="' + (tab === k ? 'on' : '') + '">' + esc(l) + (n ? ' <small>(' + int(n) + ')</small>' : '') + (bad ? '<span class="count">' + bad + '</span>' : '') + '</a>';
@@ -813,11 +1057,14 @@
 
   function matchTab(r, rows, calc) {
     let h = '<div class="note info">بعد تقديم الإقرار على المنظومة، نزّل الإقرار بصيغة PDF وارفعه هنا. يقرأ البرنامج منه الملخص والأرقام وعدد الفواتير ويطابقها مع الفواتير المسجلة. إذا تعذّرت قراءة الملف فأدخل أرقام الملخص يدويًا.</div>';
-    h += '<div class="toolbar">' + (A.writable() ? '<button type="button" class="btn primary" data-act="vat-upload-pdf">⤒ رفع الإقرار المقدَّم (PDF)</button><input type="file" id="vat-pdf" accept=".pdf" hidden><button type="button" class="btn" data-act="vat-manual-sub" data-id="' + r.id + '">إدخال الملخص يدويًا</button>' : '') +
-      (r.sub && A.writable() ? '<span class="grow"></span><button type="button" class="btn danger" data-act="vat-clear-sub" data-id="' + r.id + '">حذف بيانات التقديم</button>' : '') + '</div>';
+    h += '<div class="toolbar">' + (A.writable() && !r.locked ? '<button type="button" class="btn primary" data-act="vat-upload-pdf">⤒ رفع الإقرار المقدَّم (PDF)</button><input type="file" id="vat-pdf" accept=".pdf" hidden><button type="button" class="btn" data-act="vat-manual-sub" data-id="' + r.id + '">إدخال الملخص يدويًا</button>' : '') +
+      (r.sub && A.writable() && !r.locked ? '<span class="grow"></span><button type="button" class="btn danger" data-act="vat-clear-sub" data-id="' + r.id + '">حذف بيانات التقديم</button>' : '') + '</div>';
     if (!r.sub) return h + '<div class="card"><div class="empty">لم يُسجَّل تقديم الإقرار بعد.</div></div>';
     const s = r.sub, rec = V.reconcile(calc, s.parsed || {}, r);
-    h += '<section class="card"><header><h2>' + (rec.ok ? '<span class="match-ok">✓ الإقرار المقدَّم مطابق</span>' : '<span class="match-bad">✗ يوجد اختلاف</span>') + '</h2><span class="grow"></span><span class="hint">' + (s.src === 'pdf' ? 'من ملف ' + esc(s.file || 'PDF') + (s.fileChunks ? ' · <a href="#" data-act="vat-view-sub">عرض الملف</a>' : '') : 'إدخال يدوي') + '</span></header><div class="body"><div class="kv">' +
+    if (A.writable()) h += '<div class="toolbar">' + (!rec.ok && !s.accepted ? '<button type="button" class="btn" data-act="vat-accept" data-id="' + r.id + '" data-v="1">اعتماد الفرق كمقبول</button>' : '') +
+      (s.accepted ? '<span class="pill ok">فرق مقبول' + (s.accepted.note ? ': ' + esc(s.accepted.note) : '') + '</span><button type="button" class="btn sm" data-act="vat-accept" data-id="' + r.id + '" data-v="0">إلغاء الاعتماد</button>' : '') +
+      '<span class="grow"></span><button type="button" class="btn" data-act="vat-lock" data-id="' + r.id + '" data-v="' + (r.locked ? '0' : '1') + '">' + (r.locked ? '🔓 فتح القفل' : '🔒 قفل الإقرار') + '</button></div>';
+    h += '<section class="card"><header><h2>' + (rec.ok ? '<span class="match-ok">✓ الإقرار المقدَّم مطابق</span>' : '<span class="match-bad">✗ يوجد اختلاف</span>') + '</h2><span class="grow"></span><span class="hint">' + (s.src === 'pdf' || s.viaPdf ? 'من ملف ' + esc(s.file || 'PDF') + (s.fileChunks ? ' · <a href="#" data-act="vat-view-sub">عرض الملف</a>' : '') : 'إدخال يدوي') + '</span></header><div class="body"><div class="kv">' +
       '<span>رقم الإقرار</span><span class="num">' + esc(s.formNo || '—') + '</span><span>تاريخ التقديم</span><span class="num">' + esc(s.sentDate || '—') + '</span>' +
       '<span>نوع الإقرار</span><span>' + (s.kind === 'amended' ? 'معدل' : s.kind === 'original' ? 'أصلي' : '—') + '</span>' +
       '<span>الفترة في الإقرار</span><span class="num">' + esc(s.from ? s.from + ' ← ' + s.to : '—') + (rec.periodOk ? '' : ' <span class="iss crit">لا تطابق فترة هذا الإقرار (' + esc(r.from) + ' ← ' + esc(r.to) + ')</span>') + '</span></div></div>';
@@ -831,7 +1078,7 @@
 
   /* ---------------- binding (inputs that are not plain filters) ---------------- */
   function bindRet(id, tab) {
-    const r = retById(id), e = VS.cache.get(id); if (!r || !e || !e.loaded) return;
+    const r = retById(id), e = VS.cache.get(id); if (!r || !e || !e.loaded || r.locked) return;
     const f = $('#vat-file'); if (f) f.addEventListener('change', () => { if (f.files[0]) importFile(r, f.files[0]); f.value = ''; });
     const pf = $('#vat-pdf'); if (pf) pf.addEventListener('change', () => { if (pf.files[0]) readSubmittedPdf(r, pf.files[0]); pf.value = ''; });
     const prev = $('#vat-prev');
@@ -940,7 +1187,7 @@
 
   /* ---------------- invoice editor ---------------- */
   function openInvoice(r, inv, preset) {
-    const e = VS.cache.get(r.id), isNew = !inv, ro = !A.writable();
+    const e = VS.cache.get(r.id), isNew = !inv, ro = !A.writable() || !!r.locked;
     const side = inv ? inv.side : preset.side;
     inv = inv ? clean(inv) : { id: uid(), side, src: 'manual', dt: Number(preset.dt) || 1, no: '', date: r.to, name: Number(preset.dt) === 5 ? 'مستهلك نهائي' : '', reg: '', file: '', addr: '', nid: '', phone: '', lines: [] };
     if (!inv.lines.length) inv.lines.push(V.defaultLine(side, { d: side === 'S' ? 'مبيعات' : '', net: 0, vat: 0, rate: 14, o: side === 'S' ? 1 : 3 }));
@@ -1242,7 +1489,7 @@
     return rets().filter(r => r.client === cid && r.period === period).sort((a, b) => (a.kind === 'amended' ? -1 : 1) - (b.kind === 'amended' ? -1 : 1) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || null;
   }
   const firstPer = (cid) => rets().filter(r => r.client === cid).map(r => r.period).sort()[0] || '9999';
-  const SHORT = { draft: 'مسودة', ready: 'جاهز', submitted: 'مقدَّم', matched: '✓ مطابق', diff: '✗ فروق' };
+  const SHORT = { draft: 'مسودة', ready: 'جاهز', submitted: 'مقدَّم', matched: '✓ مطابق', accepted: '✓ فرق مقبول', diff: '✗ فروق' };
   /* rows of returns with sales and purchases split by kind. list: [{ lead: [label cells], r: return or null, note }] */
   const BRL = Object.fromEntries(V.BR_S.concat(V.BR_P));
   function brReport(leadCols, list) {
@@ -1396,12 +1643,26 @@
 
   /* ---------------- actions ---------------- */
   function cur() { const p = parse(decodeURIComponent(location.hash.slice(1)).split('-').slice(1).join('-')); return p.view === 'ret' ? retById(p.id) : null; }
+  const EDIT_ACTS = ['vat-import', 'vat-add-inv', 'vat-bulk', 'vat-multi', 'vat-toggle-x', 'vat-undo', 'vat-prev-auto', 'vat-upload-pdf', 'vat-manual-sub', 'vat-clear-sub', 'vat-del-ret', 'vat-accept'];
   function act(a, el) {
     const r = cur();
+    if (r && r.locked && EDIT_ACTS.includes(a)) return toast('الإقرار مقفول بعد المطابقة. افتح القفل الأول.', true);
     switch (a) {
       case 'vat-new': return A.writable() ? openNew({ client: el.dataset.client, period: el.dataset.period }) : null;
       case 'vat-pick': ui.vClient = el.dataset.client; return A.go('vat-list');
       case 'vat-dash-clear': ui.dClient = ''; ui.dStaff = ''; return A.renderPage();
+      case 'vat-hist-clear': { const h = H(); h.invs = []; h.files = []; return A.renderPage(); }
+      case 'vat-hist-paste': return openHistPaste();
+      case 'vat-hist-copy': return histCopySystem();
+      case 'vat-hist-save': return saveHist();
+      case 'vat-lock': { const x = retById(el.dataset.id); return x && A.writable() ? write(() => S.db.doc('vatReturns/' + x.id).update({ locked: el.dataset.v === '1' })).then(ok => ok && toast(el.dataset.v === '1' ? 'اتقفل الإقرار' : 'اتفتح القفل')) : null; }
+      case 'vat-accept': {
+        const x = retById(el.dataset.id); if (!x || !x.sub || !A.writable()) return;
+        if (el.dataset.v === '0') return write(() => S.db.doc('vatReturns/' + x.id).update({ sub: clean(Object.assign({}, x.sub, { accepted: null })) }));
+        const bg = modal('اعتماد الفرق كمقبول', fld('ac-note', 'سبب الفرق (يظهر في التقارير)', inp('ac-note', ''), true), '<button type="button" class="btn" data-close>إلغاء</button><button type="button" class="btn primary" id="ac-go">اعتماد</button>');
+        $('#ac-go', bg).addEventListener('click', async () => { if (await write(() => S.db.doc('vatReturns/' + x.id).update({ sub: clean(Object.assign({}, x.sub, { accepted: { note: val('ac-note', bg), at: new Date().toISOString() } })) }))) closeModal(); });
+        return;
+      }
       case 'vat-pay': return openPay(el.dataset.id);
       case 'vat-pay-del': return delPay(el.dataset.id, el.dataset.pid);
       case 'vat-pay-bulk': return openBulkPay();
@@ -1452,7 +1713,7 @@
   function navMenu(k, W) {
     const L = (label, href) => ({ label, href }), A = (label, act, data) => W ? { label, act, data: data || {} } : null;
     if (k === 'vat') return [L('لوحة الإقرارات', '#vat'), A('+ إقرار جديد', 'vat-new')];
-    if (k === 'vat-list') return [L('جميع الإقرارات', '#vat-list'), { label: 'المسودات', nav: 1, act: 'vat-list-status', data: { v: 'draft' } }, { label: 'جاهزة للتقديم', nav: 1, act: 'vat-list-status', data: { v: 'ready' } },
+    if (k === 'vat-list') return [L('جميع الإقرارات', '#vat-list'), W ? L('⤒ إقرارات قديمة من شيت البوابة', '#vat-hist') : null, { label: 'المسودات', nav: 1, act: 'vat-list-status', data: { v: 'draft' } }, { label: 'جاهزة للتقديم', nav: 1, act: 'vat-list-status', data: { v: 'ready' } },
       { label: 'مقدَّمة ومطابقة', nav: 1, act: 'vat-list-status', data: { v: 'matched' } }, { label: 'مقدَّمة وبها فروق', nav: 1, act: 'vat-list-status', data: { v: 'diff' } }, A('+ إقرار جديد', 'vat-new')];
     if (k === 'vat-rep') return REPS.map(([r, l]) => L(l, '#vat-rep-' + r)).concat([{ label: 'دفتر المبيعات', nav: 1, act: 'vat-book', data: { v: 'S' } }, { label: 'دفتر المشتريات والمصروفات', nav: 1, act: 'vat-book', data: { v: 'P' } }]).filter(x => x.href !== '#vat-rep-books');
     if (k === 'vat-parties') return [L('الموردون والعملاء', '#vat-parties')];
@@ -1463,6 +1724,7 @@
     const p = parse(sub);
     if (p.view === 'dash') return [];
     if (p.view === 'list') return [['إقرارات القيمة المضافة', '#vat-list']];
+    if (p.view === 'hist') return [['إقرارات القيمة المضافة', '#vat-list'], ['الإقرارات القديمة', '']];
     if (p.view === 'rep') return [['تقارير الإقرارات', '#vat-rep'], [(REPS.find(x => x[0] === p.key) || REPS[0])[1], '']];
     if (p.view === 'parties') return [['الموردون والعملاء', '']];
     if (p.view === 'due') return [['الضريبة المستحقة السداد', p.client ? '#vat-due' : '']].concat(p.client ? [['كشف حساب ' + A.clientName(p.client), '']] : []);
@@ -1476,7 +1738,7 @@
   document.addEventListener('keydown', (ev) => {
     if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== 'z' || ev.shiftKey) return;
     if (ev.target.closest && ev.target.closest('input,textarea,select,.modal')) return;
-    const r = cur(); if (!r || !A.writable()) return;
+    const r = cur(); if (!r || !A.writable() || r.locked) return;
     ev.preventDefault(); undo(r.id);
   });
   window.OFVat = { page, bind, act, allChunks, allFiles, homeStats, navMenu, crumbs, dueSummary, payInfo, resetCache: () => { VS.cache.clear(); VS.undo.clear(); VS.sel.clear(); } };
