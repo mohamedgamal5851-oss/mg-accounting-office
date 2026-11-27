@@ -1363,7 +1363,7 @@
     if (!V.doc) {
       if (!writable()) return '<div class="card"><div class="empty">لم يُفعَّل حفظ بيانات الدخول بعد، أو ليست لديك صلاحية الاطلاع عليها.</div></div>';
       return '<section class="card"><header><h2>تفعيل خزنة بيانات الدخول</h2></header><div class="body"><form id="vault-setup" class="form">' +
-        '<p class="field full" style="margin:0">تُحفظ أسماء المستخدمين وكلمات المرور الخاصة بالعملاء مشفرة بكلمة مرور رئيسية للمكتب، ولا يستطيع أحد قراءتها بدون هذه الكلمة. اختر كلمة قوية (12 حرفًا على الأقل) وشاركها فقط مع من يحتاجها من فريقك.</p>' +
+        '<p class="field full" style="margin:0">تُحفظ أسماء المستخدمين وكلمات المرور الخاصة بالعملاء مشفرة بكلمة مرور رئيسية للمكتب، ولا يستطيع أحد قراءتها بدون هذه الكلمة. اختر كلمة لا تقل عن 4 أحرف، وكلما كانت أطول كانت أصعب في التخمين، وشاركها فقط مع من يحتاجها من فريقك.</p>' +
         '<div class="note field full"><b>مهم:</b> إذا نُسيت كلمة المرور الرئيسية فلا توجد أي طريقة لاسترجاع البيانات المحفوظة. احتفظ بها في مكان آمن.</div>' +
         fld('vs-p1', 'كلمة المرور الرئيسية', '<input type="password" id="vs-p1" autocomplete="new-password" required>') + fld('vs-p2', 'تأكيد كلمة المرور', '<input type="password" id="vs-p2" autocomplete="new-password" required>') +
         '<div class="field full err" id="vs-err"></div><div class="field full"><button type="submit" class="btn primary" style="align-self:flex-start">تفعيل الخزنة</button></div></form></div></section>';
@@ -1405,7 +1405,7 @@
     if (vs) vs.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const p1 = $('#vs-p1').value, p2 = $('#vs-p2').value, err = $('#vs-err');
-      if (p1.length < 12) return (err.textContent = 'كلمة المرور يجب ألا تقل عن 12 حرفًا.');
+      if (p1.length < 4) return (err.textContent = 'كلمة المرور يجب ألا تقل عن 4 أحرف.');
       if (p1 !== p2) return (err.textContent = 'كلمتا المرور غير متطابقتين.');
       if (V.busy) return; V.busy = true;
       try {
@@ -1461,7 +1461,7 @@
     $('#vp-form', bg).addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const p1 = $('#vp-1', bg).value, p2 = $('#vp-2', bg).value, err = $('#vp-err', bg);
-      if (p1.length < 12) return (err.textContent = 'كلمة المرور يجب ألا تقل عن 12 حرفًا.');
+      if (p1.length < 4) return (err.textContent = 'كلمة المرور يجب ألا تقل عن 4 أحرف.');
       if (p1 !== p2) return (err.textContent = 'كلمتا المرور غير متطابقتين.');
       const raw = new Uint8Array(await crypto.subtle.exportKey('raw', V.key));
       const doc = await wrapVault(p1, raw);
