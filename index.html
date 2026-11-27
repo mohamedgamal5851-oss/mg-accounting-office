@@ -2,9 +2,18 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="of-build" content="2026-11-27 18:28">
+<meta name="of-build" content="2026-11-27 21:28">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>إدارة مكتب المحاسبة</title>
+<!-- the program on a phone: added to the home screen it opens like an app -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#13294B">
+<link rel="icon" type="image/png" href="icons/favicon-64.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="مكتب MG">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&family=Roboto:wght@400&display=swap" rel="stylesheet">
@@ -692,6 +701,50 @@ a.hv-ns:hover { text-decoration: underline; }
 .dlist a span { flex: 1; } .dlist a small { color: var(--muted); font-size: 12px; } .dlist a b { font-variant-numeric: tabular-nums; }
 .drawer footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); background: var(--bg); }
 @media (prefers-reduced-motion: reduce) { .kpi .meter i, .vbars i, .hbar2 i, .cmdk-box, .cmdk-scrim, .drawer, .drawer-scrim, #main.page-enter .content > * { animation: none !important; } }
+/* ---------- phone: a bar at the bottom, rows as cards, call and WhatsApp ---------- */
+.tabbar { display: none; }
+.contact { display: inline-flex; gap: 6px; margin-inline-start: 10px; vertical-align: middle; flex-wrap: wrap; }
+.contact .btn { gap: 5px; } .contact .btn svg { width: 15px; height: 15px; }
+.contact .btn.wa { color: #12804A; border-color: #BFE3CC; }
+.mo { display: none !important; }
+@media (max-width: 760px) {
+  body:has(.tabbar:not(:empty)) { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
+  .tabbar:empty { display: none !important; }
+  .tabbar { display: flex; position: fixed; inset-inline: 0; bottom: 0; z-index: 35; background: var(--surface); border-top: 1px solid var(--line); padding: 2px 4px calc(2px + env(safe-area-inset-bottom)); align-items: flex-end; box-shadow: 0 -4px 16px rgba(19,41,75,.06); }
+  .tabbar a { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 2px 5px; color: var(--muted); text-decoration: none; font-size: 11px; font-weight: 500; position: relative; min-height: 52px; -webkit-tap-highlight-color: transparent; }
+  .tabbar a svg { width: 23px; height: 23px; }
+  .tabbar a.on { color: var(--brand); font-weight: 700; }
+  .tabbar a.on::before { content: ''; position: absolute; top: -3px; width: 26px; height: 3px; border-radius: 0 0 3px 3px; background: var(--gold); }
+  .tb-badge { position: absolute; top: 2px; left: calc(50% + 5px); background: var(--crit); color: #fff; font-style: normal; font-size: 10px; font-weight: 700; min-width: 17px; height: 17px; line-height: 17px; border-radius: 9px; padding: 0 4px; text-align: center; }
+  .tb-new { flex: none; width: 52px; height: 52px; margin: 0 2px 6px; border-radius: 50%; border: 0; background: var(--gold); color: #fff; font-size: 30px; font-weight: 400; display: grid; place-items: center; box-shadow: 0 6px 16px rgba(166,130,74,.45); transform: translateY(-12px); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .tb-new span { margin-top: -4px; }
+  .mo { display: inline-flex !important; } .dk { display: none; }
+  /* 16px fields: the iPhone does not zoom in on them */
+  input, select, textarea { font-size: 16px !important; }
+  .toolbar { gap: 8px; } .toolbar > input[type=search] { flex: 1 1 100%; } .toolbar > select { flex: 1 1 calc(50% - 8px); min-width: 0; }
+  /* rows as cards: the main cell as the title, every other cell with its column's title above it */
+  table.mc thead { display: none; }
+  table.mc, table.mc tbody, table.mc tfoot { display: block; width: 100%; }
+  table.mc tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--line); position: relative; }
+  table.mc td { display: block; border: 0 !important; padding: 0 !important; text-align: right !important; white-space: normal; min-width: 0; font-size: 14px; background: transparent !important; }
+  table.mc td::before { content: attr(data-l); display: block; font-size: 11.5px; color: var(--muted); font-weight: 500; margin-bottom: 1px; direction: rtl; text-align: right; }
+  table.mc td.mt, table.mc td.mw { grid-column: 1 / -1; }
+  table.mc td.mt { font-size: 16px; font-weight: 600; padding-inline-end: 34px !important; } table.mc td.mt::before { display: none; }
+  table.mc td.mh, table.mc td:empty, table.mc td.mw:has(> .sub:empty:only-child) { display: none; }
+  table.mc td { box-shadow: none !important; }
+  table.mc td.empty { grid-column: 1 / -1; text-align: center !important; } table.mc td.empty::before { display: none; }
+  table.mc td.acts { display: flex; gap: 8px; flex-wrap: wrap; } table.mc td.acts::before { display: none; }
+  table.mc td.acts .btn { flex: 1 1 auto; min-height: 40px; }
+  table.mc td:has(> input[type=checkbox]:only-child) { position: absolute; top: 14px; inset-inline-end: 14px; } table.mc td:has(> input[type=checkbox]:only-child)::before { display: none; }
+  table.mc td input[type=checkbox] { width: 22px; height: 22px; }
+  table.mc tfoot tr { background: var(--accent-soft); } table.mc tfoot td:first-child { grid-column: 1 / -1; font-weight: 700; } table.mc tfoot td:first-child::before { display: none; }
+  table.mc tr.row-crit, table.mc tr.dl-crit { box-shadow: inset -4px 0 0 var(--crit); background: var(--crit-soft); } table.mc tr.row-warn, table.mc tr.dl-warn { box-shadow: inset -4px 0 0 var(--gold); background: var(--warn-soft); }
+  table.mc tr.click:active { background: var(--accent-soft); }
+  table.mc td select { width: 100%; }
+  .card.tablewrap:has(> table.mc), .tablewrap:has(> table.mc) { overflow: visible; }
+  .contact { margin: 8px 0 0; display: flex; } .contact .btn { flex: 1; justify-content: center; min-height: 40px; }
+  #nav-dd { max-width: calc(100vw - 16px); }
+}
 </style>
 </head>
 <body>
@@ -709,6 +762,7 @@ a.hv-ns:hover { text-decoration: underline; }
     <div class="loading">جارٍ التحميل…</div>
   </main>
 </div>
+<nav class="tabbar" id="tabbar" aria-label="التنقل السريع"></nav>
 <div id="modal-root"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>

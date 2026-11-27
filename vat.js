@@ -410,15 +410,15 @@
       (ui.duClient || ui.duStaff || ui.duAge ? '<button type="button" class="btn sm" data-act="vat-due-clear">إلغاء التصفية</button>' : '') +
       '<span class="grow"></span>' + (canPay() && VS.dueSel.size ? '<span class="hint">' + int(VS.dueSel.size) + ' محدد</span><button type="button" class="btn primary" data-act="vat-pay-bulk">تسجيل المحدد كمسدد</button>' : '') + '</div>';
     const showX = !!cfg.rate;
-    h += '<div class="card"><div class="tablewrap"><table class="vat-tbl due-tbl"><thead><tr>' + (canPay() ? '<th><input type="checkbox" data-due-all' + (list.length && list.every(x => VS.dueSel.has(x.key)) ? ' checked' : '') + ' title="تحديد الكل"></th>' : '') +
+    h += '<div class="card"><div class="tablewrap"><table class="vat-tbl due-tbl mc"><thead><tr>' + (canPay() ? '<th><input type="checkbox" data-due-all' + (list.length && list.every(x => VS.dueSel.has(x.key)) ? ' checked' : '') + ' title="تحديد الكل"></th>' : '') +
       '<th>الشركة</th><th>الفترة</th><th>حالة الإقرار</th><th>آخر موعد للسداد</th><th>التأخير</th><th class="n">المستحق</th><th class="n">المسدد</th><th class="n">المتبقي</th>' + (showX ? '<th class="n">ض. إضافية تقديرية</th>' : '') + '<th></th></tr></thead><tbody>';
     if (!list.length) h += '<tr><td colspan="' + (showX ? 11 : 10) + '" class="empty">' + (all.length ? 'لا يوجد مستحق بهذه الشروط.' : 'لا توجد ضريبة مستحقة غير مسددة. 👌') + '</td></tr>';
     for (const x of list) {
       h += '<tr class="' + (x.late > 60 ? 'dl-crit' : x.late > 0 ? 'dl-warn' : '') + '">' + (canPay() ? '<td><input type="checkbox" data-due-sel="' + esc(x.key) + '"' + (VS.dueSel.has(x.key) ? ' checked' : '') + '></td>' : '') +
-        '<td><a href="#vat-due-' + x.c.id + '" title="كشف الحساب الضريبي">' + esc(x.c.name) + '</a></td><td><a href="#vat-ret-sum-' + x.r.id + '">' + esc(periodLabel(x.r)) + '</a></td><td>' + pill(statusOf(x.r)) + '</td>' +
+        '<td class="mt"><a href="#vat-due-' + x.c.id + '" title="كشف الحساب الضريبي">' + esc(x.c.name) + '</a></td><td><a href="#vat-ret-sum-' + x.r.id + '">' + esc(periodLabel(x.r)) + '</a></td><td>' + pill(statusOf(x.r)) + '</td>' +
         '<td class="num">' + esc(x.due) + '</td><td><span class="iss ' + (x.late > 60 ? 'crit' : x.late > 0 ? 'warn' : 'info') + '">' + esc(lateText(x)) + '</span></td>' +
         '<td class="n">' + money(x.amt) + '</td><td class="n">' + (x.paid ? money(x.paid) : '') + '</td><td class="n pos"><b>' + money(x.left) + '</b></td>' + (showX ? '<td class="n">' + (x.extra ? money(x.extra) : '') + '</td>' : '') +
-        '<td class="acts">' + (canPay() ? '<button type="button" class="btn sm primary" data-act="vat-pay" data-id="' + x.r.id + '">تسجيل سداد</button>' : '') + '<button type="button" class="btn sm" data-act="vat-pay-remind" data-client="' + x.c.id + '">تذكير</button></td></tr>';
+        '<td class="acts mw">' + (canPay() ? '<button type="button" class="btn sm primary" data-act="vat-pay" data-id="' + x.r.id + '">تسجيل سداد</button>' : '') + '<button type="button" class="btn sm" data-act="vat-pay-remind" data-client="' + x.c.id + '">تذكير</button></td></tr>';
     }
     h += '</tbody>' + (list.length ? '<tfoot><tr>' + (canPay() ? '<td></td>' : '') + '<td colspan="5">الإجمالي</td><td class="n">' + money(sum(list, x => x.amt)) + '</td><td class="n">' + money(sum(list, x => x.paid)) + '</td><td class="n">' + money(sum(list)) + '</td>' + (showX ? '<td class="n">' + money(sum(list, x => x.extra)) + '</td>' : '') + '<td></td></tr></tfoot>' : '') + '</table></div></div>';
     if (showX) h += '<div class="hint" style="padding:6px 4px">الضريبة الإضافية تقديرية: ' + esc(String(cfg.rate)) + '% من المتبقي عن كل شهر تأخير' + (cfg.part ? ' (جزء الشهر يُحسب شهرًا)' : '') + '، وتُراجَع على القانون الساري قبل الاعتماد عليها.</div>';

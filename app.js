@@ -98,6 +98,8 @@
     f41: '<path d="M6 3h9l4 4v14H6z"/><path d="M9 13h6M9 17h4"/>',
     apps: '<rect x="4" y="4" width="6" height="6" rx="1.2"/><rect x="14" y="4" width="6" height="6" rx="1.2"/><rect x="4" y="14" width="6" height="6" rx="1.2"/><rect x="14" y="14" width="6" height="6" rx="1.2"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
+    phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
+    chat: '<path d="M4 20l1.4-4.2A8 8 0 1 1 8.6 19z"/>',
     setup: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'
   };
   /* four sections across the top bar; each shows its pages as tabs under it. Settings, backup and users sit in the ⚙ menu */
@@ -196,6 +198,7 @@
     d.style.top = (r.bottom + 6) + 'px';
     d.classList.add('show');
     const w = d.offsetWidth; d.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) + 'px';
+    if (r.top > window.innerHeight * 0.6) d.style.top = Math.max(8, r.top - d.offsetHeight - 8) + 'px';
   }
   function bindNavMenus() {
     $$('#subnav a[data-k]').forEach(a => {
@@ -251,11 +254,22 @@
     nav.onscroll = () => { ind.classList.remove('ready'); place(); requestAnimationFrame(() => ind.classList.add('ready')); };
   }
   window.addEventListener('resize', () => { const ind = $('#nav-ind'); if (ind) { ind.classList.remove('ready'); placeNavIndicator(); } });
+  /* the phone's bar at the bottom: the pages used most away from the desk, and «+ جديد» in the middle */
+  function renderTabbar(cp, badge) {
+    const tb = $('#tabbar'); if (!tb) return;
+    const page = cp.page, sub = cp.sub || '';
+    const items = [['dashboard', 'الرئيسية', 'dashboard', page === 'dashboard' || page === 'home', 0], ['clients', 'العملاء', 'clients', page === 'clients' || page === 'client', 0],
+      ['+'], ['vat-due', 'الضريبة', 'vat-due', page === 'vat' && /^due/.test(sub), badge['vat-due']], ['finance', 'التحصيلات', 'finance', page === 'finance', 0], ['tasks', 'الإجراءات', 'tasks', page === 'tasks', badge.tasks]]
+      .filter(x => x[0] === '+' ? navMenu('new').length : level(x[0] === 'vat-due' ? 'vat' : x[0]) !== 'none');
+    tb.innerHTML = items.map(x => x[0] === '+' ? '<button type="button" class="tb-new" data-act="new-menu" data-k="new" aria-haspopup="menu" aria-label="جديد"><span>+</span></button>' :
+      '<a href="#' + x[0] + '"' + (x[3] ? ' class="on" aria-current="page"' : '') + '>' + svgIcon(x[2]) + '<span>' + esc(x[1]) + '</span>' + (x[4] ? '<i class="tb-badge">' + x[4] + '</i>' : '') + '</a>').join('');
+  }
   function renderNav() {
     const cp = currentPage(), page = cp.page, sec = sectionOf(page);
     const A = S.M && S.M.alerts, vd = S.M && window.OFVat && window.OFVat.dueSummary && level('vat') !== 'none' ? window.OFVat.dueSummary() : null;
     const badge = { tasks: A ? A.overdue.length : 0, 'vat-due': vd ? vd.nLate : 0 }, tip = { tasks: 'إجراءات متأخرة', 'vat-due': 'إقرارات متأخرة السداد' };
     const secBadge = { main: badge.tasks, tax: badge['vat-due'] };
+    renderTabbar(cp, badge);
     const on = (k) => page === 'vat' ? (k === 'vat-rep' ? /^rep/.test(cp.sub) : k === 'vat-due' ? /^due/.test(cp.sub) : k === 'vat-parties' ? /^parties/.test(cp.sub) : k === 'vat-list' ? /^(list|ret|hist)/.test(cp.sub) : k === 'vat' && !cp.sub) :
       (page === k || (page === 'client' && k === 'clients') || (page === 'home' && k === 'dashboard'));
     $('#nav').innerHTML = SECTIONS.filter(x => !x.gear && modVisible(x)).map(x => '<a href="#' + modHome(x) + '" data-sec="' + x.id + '" class="' + (x === sec ? 'on' : '') + '">' + svgIcon(x.icon) + '<span>' + esc(x.name) + '</span>' +
@@ -332,11 +346,31 @@
     else if (page === 'reports') h = pageReports(sub || 'balances');
     else if (page === 'setup') h = pageSettings();
     main.innerHTML = h;
+    labelCells(main);
     restoreFocus(focus);
     if (page === 'setup') { bindSettings(); bindCertSettings(); }
     if (page === 'client' && extra === 'access') bindAccess();
     if (page === 'vat' && window.OFVat) window.OFVat.bind(sub);
     if (page === 'backup') { const ib = $('#imp-backup2'); if (ib) ib.addEventListener('change', () => { if (ib.files[0]) importBackup(ib.files[0]); ib.value = ''; }); }
+  }
+  /* on a phone a table marked .mc shows each row as a card: every cell takes its column's title as a label */
+  function labelCells(root) {
+    for (const t of root.querySelectorAll('table.mc')) {
+      const head = t.tHead && t.tHead.rows[t.tHead.rows.length - 1]; if (!head) continue;
+      const names = []; for (const th of head.cells) for (let k = 0; k < (th.colSpan || 1); k++) names.push(th.textContent.trim());
+      for (const tr of t.querySelectorAll('tbody tr, tfoot tr')) { let i = 0; for (const td of tr.cells) { if (!td.dataset.l && names[i]) td.dataset.l = names[i]; i += td.colSpan || 1; } }
+    }
+  }
+  /* phone links: a call, and a WhatsApp chat (an Egyptian mobile 01… becomes 201…) */
+  function telHref(p) { const d = String(p || '').replace(/[^\d+]/g, ''); return d ? 'tel:' + d : ''; }
+  function waHref(p) {
+    let d = String(p || '').replace(/\D/g, ''); if (!d) return '';
+    if (d.startsWith('00')) d = d.slice(2); else if (/^01\d{9}$/.test(d)) d = '2' + d;
+    return d.length >= 11 ? 'https://wa.me/' + d : '';
+  }
+  function contactBtns(p, cls) {
+    const t = telHref(p), w = waHref(p); if (!t) return '';
+    return '<span class="contact' + (cls ? ' ' + cls : '') + '"><a class="btn sm" href="' + t + '">' + svgIcon('phone') + 'اتصال</a>' + (w ? '<a class="btn sm wa" href="' + w + '" target="_blank" rel="noopener">' + svgIcon('chat') + 'واتساب</a>' : '') + '</span>';
   }
   function captureFocus() {
     const a = document.activeElement;
@@ -619,15 +653,15 @@
       '<select data-ui="cStaff">' + options(staffOptions(), u.cStaff, 'جميع الموظفين') + '</select>' +
       '<select data-ui="cLaw">' + options(Object.entries(TAX_LAW), u.cLaw, 'كل الأنظمة الضريبية') + '</select>' +
       '<select data-ui="cBal">' + options([['due', 'عليهم مستحقات'], ['adv', 'لهم دفعات مقدمة']], u.cBal, 'كل الأرصدة') + '</select></div>';
-    h += '<div class="card tablewrap"><table><thead><tr><th>الكود</th><th>العميل</th><th>نوع الشركة</th><th>النشاط</th><th>القانون</th><th>الموظف المسؤول</th><th>الهاتف</th><th>الالتزامات</th><th class="n">الرصيد (' + esc(cur()) + ')</th><th>آخر تحصيل</th><th>أقدم مستحق</th></tr></thead><tbody>';
+    h += '<div class="card tablewrap"><table class="mc"><thead><tr><th>الكود</th><th>العميل</th><th>نوع الشركة</th><th>النشاط</th><th>القانون</th><th>الموظف المسؤول</th><th>الهاتف</th><th>الالتزامات</th><th class="n">الرصيد (' + esc(cur()) + ')</th><th>آخر تحصيل</th><th>أقدم مستحق</th></tr></thead><tbody>';
     if (!list.length) h += '<tr><td colspan="11" class="empty">لا يوجد عملاء مطابقون</td></tr>';
     let tot = 0;
     for (const c of list) {
       const a = M.acct.get(c.id); tot += a.balance;
       const obs = C.effectiveObligations(M, c).map(id => M.obById.get(id)).filter(Boolean);
-      h += '<tr class="click" data-client="' + c.id + '"><td class="code">' + esc(c.code) + '</td><td><strong>' + esc(c.name) + '</strong>' + (c.status === 'inactive' ? ' <span class="pill mute">متوقف</span>' : '') + '</td>' +
-        '<td>' + esc(c.legalForm || '—') + '</td><td>' + esc(c.activity || '—') + '</td><td>' + (lawOf(c) === '6-2025' ? '<span class="pill info">قانون 6 (التيسيرات)</span>' : 'قانون 91') + '</td>' +
-        '<td>' + esc(staffName(c.assignedTo)) + '</td><td class="num">' + esc(c.phone || '') + '</td><td><span class="sub">' + (obs.length ? obs.length + ' التزام' : '—') + '</span></td>' + balCell(a.balance) +
+      h += '<tr class="click" data-client="' + c.id + '"><td class="code mh">' + esc(c.code) + '</td><td class="mt"><strong>' + esc(c.name) + '</strong>' + (c.status === 'inactive' ? ' <span class="pill mute">متوقف</span>' : '') + ' <span class="code mo">' + esc(c.code) + '</span></td>' +
+        '<td>' + esc(c.legalForm || '—') + '</td><td class="mh">' + esc(c.activity || '—') + '</td><td>' + (lawOf(c) === '6-2025' ? '<span class="pill info">قانون 6 (التيسيرات)</span>' : 'قانون 91') + '</td>' +
+        '<td class="mh">' + esc(staffName(c.assignedTo)) + '</td><td class="num mw">' + (c.phone ? '<span class="dk">' + esc(c.phone) + '</span>' + contactBtns(c.phone, 'mo') : '') + '</td><td class="mh"><span class="sub">' + (obs.length ? obs.length + ' التزام' : '—') + '</span></td>' + balCell(a.balance) +
         '<td class="num">' + esc(a.lastPayment || '—') + '</td><td>' + (a.aging.oldest && a.balance > 0 ? '<span class="pill ' + (a.aging.oldestDays > 90 ? 'crit' : a.aging.oldestDays > 30 ? 'warn' : 'mute') + '">' + int(a.aging.oldestDays) + ' يوم</span>' : '') + '</td></tr>';
     }
     h += '</tbody>' + (list.length ? '<tfoot><tr><td colspan="8">الإجمالي</td>' + balCell(tot) + '<td colspan="2"></td></tr></tfoot>' : '') + '</table></div>';
@@ -645,7 +679,7 @@
       '<span>الشكل القانوني</span><span>' + esc(c.legalForm || '—') + '</span><span>النشاط</span><span>' + esc(c.activity || '—') + '</span>' +
       '<span>القانون الضريبي</span><span>' + esc(TAX_LAW[lawOf(c)]) + '</span><span>رقم التسجيل الضريبي</span><span class="num">' + esc(c.taxRegNo || '—') + '</span><span>المأمورية</span><span>' + esc(c.taxOffice || '—') + '</span>' +
       '<span>الموظف المسؤول</span><span>' + esc(staffName(c.assignedTo) || '—') + '</span></div><div class="kv">' +
-      '<span>المسؤول لدى العميل</span><span>' + esc(c.contactName || '—') + '</span><span>الهاتف</span><span class="num">' + esc(c.phone || '—') + '</span>' +
+      '<span>المسؤول لدى العميل</span><span>' + esc(c.contactName || '—') + '</span><span>الهاتف</span><span class="num">' + esc(c.phone || '—') + (c.phone ? contactBtns(c.phone) : '') + '</span>' +
       '<span>البريد الإلكتروني</span><span>' + esc(c.email || '—') + '</span><span>آخر تحصيل</span><span class="num">' + esc(a.lastPayment || '—') + '</span></div>' +
       '<div class="bal"><small>الرصيد الحالي</small><b class="' + (a.balance > 0.004 ? 'pos' : a.balance < -0.004 ? 'neg' : '') + '">' + money(Math.abs(a.balance)) + ' ' + esc(cur()) + '</b><small>' + (a.balance > 0.004 ? 'مستحق على العميل' : a.balance < -0.004 ? 'دفعة مقدمة للعميل' : 'لا يوجد رصيد') + '</small>' +
       (a.balance > 0.004 ? '<div style="margin-top:8px"><button type="button" class="btn sm" data-act="reminder" data-id="' + c.id + '">رسالة تذكير بالمستحقات</button></div>' : '') + '</div></div></section>';
@@ -669,7 +703,7 @@
     let h = '<div class="toolbar"><label class="inl">من <input type="date" data-ui="stFrom" value="' + esc(u.stFrom) + '"></label><label class="inl">إلى <input type="date" data-ui="stTo" value="' + esc(u.stTo) + '"></label>' +
       (u.stFrom || u.stTo ? '<button type="button" class="btn sm" data-act="clear-st">كل الفترات</button>' : '') + '<span class="grow"></span>' +
       (S.downloads ? '<button type="button" class="btn primary" data-act="pdf-statement" data-id="' + c.id + '">⤓ كشف الحساب PDF</button><button type="button" class="btn" data-act="xlsx-statement" data-id="' + c.id + '">⤓ Excel</button>' : '') + '</div>';
-    h += '<div class="card tablewrap"><table><thead><tr><th>التاريخ</th><th>الرقم</th><th>نوع الحركة</th><th>البيان</th><th class="n">مدين</th><th class="n">دائن</th><th class="n">الرصيد</th><th></th></tr></thead><tbody>';
+    h += '<div class="card tablewrap"><table class="mc"><thead><tr><th>التاريخ</th><th>الرقم</th><th>نوع الحركة</th><th>البيان</th><th class="n">مدين</th><th class="n">دائن</th><th class="n">الرصيد</th><th></th></tr></thead><tbody>';
     h += '<tr><td class="num">' + esc(st.from || c.openingDate || '') + '</td><td></td><td colspan="2"><strong>' + (st.from ? 'رصيد أول المدة' : 'الرصيد الافتتاحي') + '</strong></td><td></td><td></td>' + balCell(st.opening) + '<td></td></tr>';
     for (const l of st.lines) {
       const t = l.t;
@@ -727,11 +761,11 @@
       '<select data-ui="fClient">' + options(clientOptions(true), u.fClient, 'كل العملاء') + '</select>' +
       '<label class="inl">من <input type="date" data-ui="fFrom" value="' + esc(u.fFrom) + '"></label><label class="inl">إلى <input type="date" data-ui="fTo" value="' + esc(u.fTo) + '"></label><span class="grow"></span>' + expBtns('finance') + '</div>';
     let dr = 0, cr = 0;
-    h += '<div class="card tablewrap"><table><thead><tr><th>التاريخ</th><th>الرقم</th><th>نوع الحركة</th><th>العميل</th><th>البيان</th><th class="n">مدين</th><th class="n">دائن</th><th></th></tr></thead><tbody>';
+    h += '<div class="card tablewrap"><table class="mc"><thead><tr><th>التاريخ</th><th>الرقم</th><th>نوع الحركة</th><th>العميل</th><th>البيان</th><th class="n">مدين</th><th class="n">دائن</th><th></th></tr></thead><tbody>';
     for (const t of list) {
       const a = Number(t.amount) || 0, s = C.sign(t.kind); if (s > 0) dr += a; else cr += a;
       h += '<tr><td class="num">' + esc(t.date) + '</td><td class="num">' + esc(t.number || '') + '</td><td><span class="pill ' + KIND_PILL[t.kind] + '">' + esc(KIND[t.kind]) + '</span></td>' +
-        '<td><a href="#client-statement-' + t.client + '">' + esc(clientName(t.client)) + '</a></td><td>' + esc(t.description || '') + (t.method ? '<div class="sub">' + esc(t.method) + (t.ref ? ' · ' + esc(t.ref) : '') + '</div>' : '') + '</td>' +
+        '<td class="mt"><a href="#client-statement-' + t.client + '">' + esc(clientName(t.client)) + '</a></td><td class="mw">' + esc(t.description || '') + (t.method ? '<div class="sub">' + esc(t.method) + (t.ref ? ' · ' + esc(t.ref) : '') + '</div>' : '') + '</td>' +
         amountCell(s > 0 ? a : 0) + amountCell(s < 0 ? a : 0) + '<td style="white-space:nowrap">' + (t.kind === 'payment' && S.downloads ? '<button type="button" class="btn sm" data-act="receipt" data-id="' + t.id + '">إيصال</button> ' : '') + actBtn('edit-tx', 'تعديل', 'sm', ' data-id="' + t.id + '"') + '</td></tr>';
     }
     if (!list.length) h += '<tr><td colspan="8" class="empty">لا توجد حركات مطابقة</td></tr>';
@@ -741,14 +775,14 @@
 
   /* ---------------- tasks ---------------- */
   function taskTable(list, showClient) {
-    let h = '<div class="tablewrap"><table><thead><tr><th>الموعد</th>' + (showClient !== false ? '<th>العميل</th>' : '') + '<th>الإجراء</th><th>الفترة</th><th>المسؤول</th><th>الحالة</th><th>ملاحظات</th></tr></thead><tbody>';
+    let h = '<div class="tablewrap"><table class="mc"><thead><tr><th>الموعد</th>' + (showClient !== false ? '<th>العميل</th>' : '') + '<th>الإجراء</th><th>الفترة</th><th>المسؤول</th><th>الحالة</th><th>ملاحظات</th></tr></thead><tbody>';
     if (!list.length) h += '<tr><td colspan="7" class="empty">لا توجد إجراءات</td></tr>';
     for (const t of list) {
       const rowCls = t.state === 'overdue' ? 'row-crit' : t.state === 'soon' ? 'row-warn' : '';
       const due = '<td class="num"><div class="stack"><span>' + esc(t.dueDate || '—') + '</span>' + (t.state === 'overdue' ? '<span class="sub" style="color:var(--crit)">متأخر ' + int(t.daysLate) + ' يوم</span>' : t.state === 'done' && t.doneDate ? '<span class="sub">أُنجز ' + esc(t.doneDate) + '</span>' : '') + '</div></td>';
       const status = writable() ? '<select data-task-status="' + t.id + '" aria-label="الحالة">' + options(Object.entries(TSTATUS), t.status || 'pending') + '</select>' : '<span class="pill ' + TSTATUS_PILL[t.status || 'pending'] + '">' + esc(TSTATUS[t.status || 'pending']) + '</span>';
       h += '<tr class="' + rowCls + '">' + due + (showClient !== false ? '<td><a href="#client-tasks-' + t.client + '">' + esc(clientName(t.client)) + '</a></td>' : '') +
-        '<td><a href="#" data-act="edit-task" data-id="' + t.id + '">' + esc(t.title) + '</a></td><td>' + esc(periodLabel(t)) + '</td><td>' + esc(staffName(t.assignedTo)) + '</td><td>' + status + '</td><td><span class="sub">' + esc([t.ref, t.notes].filter(Boolean).join(' · ')) + '</span></td></tr>';
+        '<td class="mt"><a href="#" data-act="edit-task" data-id="' + t.id + '">' + esc(t.title) + '</a></td><td>' + esc(periodLabel(t)) + '</td><td>' + esc(staffName(t.assignedTo)) + '</td><td>' + status + '</td><td class="mw"><span class="sub">' + esc([t.ref, t.notes].filter(Boolean).join(' · ')) + '</span></td></tr>';
     }
     return h + '</tbody></table></div>';
   }
@@ -2776,6 +2810,7 @@
   document.addEventListener('click', (ev) => {
     const el = ev.target.closest('[data-act],[data-client]');
     if (!el) return;
+    if (!el.dataset.act && ev.target.closest('a[href]:not([href="#"]), input, select, textarea, label')) return;
     if (el.closest('.modal') && !el.dataset.act) return;
     if (el.dataset.act) {
       const a = el.dataset.act, id = el.dataset.id;
