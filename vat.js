@@ -165,7 +165,7 @@
   function parse(sub) {
     const p = String(sub || '').split('-');
     if (p[0] === 'ret') return { view: 'ret', tab: p[1] || 'sum', id: p.slice(2).join('-') };
-    if (p[0] === 'rep') return { view: 'rep', key: p[1] || 'months' };
+    if (p[0] === 'rep') return { view: 'rep', key: p[1] || 'summary' };
     if (p[0] === 'parties') return { view: 'parties' };
     if (p[0] === 'list') return { view: 'list' };
     if (p[0] === 'due') return { view: 'due', client: p.slice(1).join('-') };
@@ -893,7 +893,7 @@
       }
     });
     h.busy = false;
-    if (ok) { toast('تم حفظ ' + int(n) + ' إقرار'); histSetClient(c.id); ui.rmClient = c.id; ui.rmYear = todo[0].per.slice(0, 4); A.go('vat-rep-months'); }
+    if (ok) { toast('تم حفظ ' + int(n) + ' إقرار'); histSetClient(c.id); ui.rbClient = c.id; ui.rsYear = todo[0].per.slice(0, 4); A.go('vat-rep-summary'); }
     else A.renderPage();
   }
 
@@ -1765,7 +1765,7 @@
   }
 
   /* ---------------- reports ---------------- */
-  const REPS = [['months', 'ملخص الإقرارات بالشهور'], ['summary', 'جميع الإقرارات'], ['due', 'الضريبة المستحقة السداد'], ['credit', 'الأرصدة الدائنة والمستحق'], ['books', 'دفاتر المبيعات والمشتريات والمصروفات']];
+  const REPS = [['summary', 'ملخص الإقرارات'], ['due', 'الضريبة المستحقة السداد'], ['credit', 'الأرصدة الدائنة والمستحق'], ['books', 'دفاتر المبيعات والمشتريات والمصروفات']];
   /* the return used for a client and period: the latest amended one when it exists */
   function retFor(cid, period) {
     return rets().filter(r => r.client === cid && r.period === period).sort((a, b) => (a.kind === 'amended' ? -1 : 1) - (b.kind === 'amended' ? -1 : 1) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || null;
@@ -1828,31 +1828,6 @@
     const col = A.col;
     if (key === 'due') return dueRep();
     if (key === 'stmt') return stmtRep();
-    if (key === 'months') {
-      const y = ui.rmYear || String(new Date().getFullYear());
-      if (!ui.rmClient) {
-        const cl = S.M.clients.filter(c => c.status !== 'inactive' && (c.vatRegistered || (c.obligations || []).includes('vat') || rets().some(r => r.client === c.id)));
-        const rows = cl.map(c => {
-          const q = A.lawOf(c) === '6-2025';
-          return [c.name, q ? 'ربع سنوي' : 'شهري'].concat(A.MONTHS.map((m, i) => {
-            const per = y + '-' + String(i + 1).padStart(2, '0');
-            if (q && (i + 1) % 3) return '';
-            const r = retFor(c.id, per); if (!r) return per < S.M.ym && per > firstPer(c.id) ? '— لم يُعَدّ' : '';
-            const res = V.r2((r.sum ? r.sum.due : 0) - prevCredit(r));
-            return SHORT[statusOf(r)] + (res > 0 ? ' · مستحق ' + money(res) : res < 0 ? ' · دائن ' + money(-res) : '');
-          }));
-        });
-        return { title: 'حالة إقرارات القيمة المضافة بالشهور', ctx: 'سنة ' + y + ' · ' + int(rows.length) + ' شركة', landscape: true, cols: [col('الشركة'), col('الدورية')].concat(A.MONTHS.map(m => col(m))), rows };
-      }
-      const c = client(ui.rmClient) || {}, q = A.lawOf(c) === '6-2025', list = [];
-      A.MONTHS.forEach((m, i) => {
-        if (q && (i + 1) % 3) return;
-        const per = y + '-' + String(i + 1).padStart(2, '0'), r = retFor(ui.rmClient, per);
-        list.push({ lead: [m + '-' + y + (r && r.kind === 'amended' ? ' (معدل)' : '')], r, note: !r && per < S.M.ym && per > firstPer(ui.rmClient) ? 'لم يُعَدّ' : '' });
-      });
-      const b = brReport([col('الفترة')], list);
-      return Object.assign(b, { title: 'ملخص إقرارات القيمة المضافة بالشهور', ctx: (c.name || '') + ' · سنة ' + y + (q ? ' · ربع سنوي' : ' · شهري'), landscape: true });
-    }
     if (key === 'credit') {
       const rows = [];
       for (const c of S.M.clients) {
@@ -1867,7 +1842,9 @@
     }
     if (key === 'books') return booksData();
     const list = rets().filter(r => (!ui.rsYear || r.period.startsWith(ui.rsYear)) && (!ui.rbClient || r.client === ui.rbClient)).sort((a, b) => a.period.localeCompare(b.period) || A.clientName(a.client).localeCompare(A.clientName(b.client), 'ar'));
-    const b = brReport([col('الشركة'), col('الفترة')], list.map(r => ({ lead: [A.clientName(r.client), perShort(r.period) + (r.kind === 'amended' ? ' (معدل)' : '')], r })));
+    // one company: its periods only; all companies: the company beside each period
+    const one = !!ui.rbClient, per = (r) => perShort(r.period) + (r.kind === 'amended' ? ' (معدل)' : '');
+    const b = brReport(one ? [col('الفترة')] : [col('الشركة'), col('الفترة')], list.map(r => ({ lead: one ? [per(r)] : [A.clientName(r.client), per(r)], r })));
     return Object.assign(b, { title: 'ملخص إقرارات القيمة المضافة', ctx: (ui.rsYear || 'جميع السنوات') + (ui.rbClient ? ' · ' + A.clientName(ui.rbClient) : ''), landscape: true });
   }
   /* ---------------- e-invoice PDFs ----------------
@@ -2057,16 +2034,12 @@
     }));
   }
   function pageReports(key) {
-    if (!REPS.some(x => x[0] === key)) key = 'months';
+    if (!REPS.some(x => x[0] === key)) key = 'summary';
     let h = topBar('تقارير الإقرارات', 'يمكن تنزيل كل تقرير بصيغة PDF أو Excel') + '<div class="content">';
     h += '<div class="tabs">' + REPS.map(([k, l]) => '<a href="#vat-rep-' + k + '" class="' + (key === k ? 'on' : '') + '">' + esc(l) + '</a>').join('') + '</div>';
     const years = Array.from(new Set(rets().map(r => r.period.slice(0, 4)))).sort().reverse();
     const rep = repData(key);
     let f = '';
-    if (key === 'months') {
-      const ys = Array.from(new Set(years.concat([String(new Date().getFullYear())]))).sort().reverse();
-      f = '<select data-ui="rmClient">' + options(A.clientOptions(true), ui.rmClient, 'جميع الشركات (الحالة الشهرية)') + '</select><select data-ui="rmYear">' + options(ys, ui.rmYear) + '</select>';
-    }
     if (key === 'due') f = '<select data-ui="duClient">' + options(A.clientOptions(true), ui.duClient, 'جميع الشركات') + '</select><select data-ui="duAge">' + options([['late', 'المتأخر فقط']].concat(AGE), ui.duAge, 'كل الأعمار') + '</select>';
     if (key === 'summary') f = '<select data-ui="rsYear">' + options(years, ui.rsYear, 'جميع السنوات') + '</select><select data-ui="rbClient">' + options(A.clientOptions(true), ui.rbClient, 'جميع الشركات') + '</select>';
     if (key === 'books') {
