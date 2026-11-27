@@ -2646,7 +2646,7 @@
 
   /* ---------------- shared with modules (vat.js) ---------------- */
   window.OFApp = { S, C, $, $$, esc, uid, money, moneyC, int, cur, monthLabel, clean, clientName, settings, options, clientOptions, topBar, actBtn, modal, closeModal, toast, write,
-    confirmBox, fld, inp, val, writable, go, renderPage, scheduleRender, makePdf, pdfHead, tableHtml, xlsxBook, saveFile, fileName, col, lawOf, MONTHS, TAX_LAW, svgIcon, level, saveSettings };
+    confirmBox, fld, inp, val, writable, go, renderPage, scheduleRender, makePdf, printPages, pdfHead, tableHtml, xlsxBook, saveFile, fileName, col, lawOf, MONTHS, TAX_LAW, svgIcon, level, saveSettings };
 
   /* ---------------- boot ---------------- */
   renderShell();

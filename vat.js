@@ -738,13 +738,13 @@
     for (const x of m.rows) {
       const lbl = esc(h.freq === 'quarterly' ? 'الربع المنتهي ' + A.monthLabel(x.per) : A.monthLabel(x.per));
       if (x.ex) {
-        t += '<tr class="hx"><td><a href="#vat-ret-sum-' + x.ex.id + '">' + lbl + '</a></td><td colspan="9"><span class="pill mute">موجود في البرنامج</span> ' + pill(statusOf(x.ex)) + ' <span class="hint">الصافي ' + money(x.res) + (x.invs.length ? ' · ' + int(x.invs.length) + ' مستند من الشيت لن يُضاف هنا' : '') + '</span></td><td colspan="2"></td></tr>';
+        t += '<tr class="hx"><td><a href="#vat-ret-sum-' + x.ex.id + '">' + lbl + '</a></td><td colspan="9"><span class="pill mute">موجود في البرنامج</span> ' + pill(statusOf(x.ex)) + ' <span class="hint">الصافي ' + money(x.res) + (x.invs.length ? ' · ' + int(x.invs.length) + ' مستند من الشيت لن يُضاف هنا' : '') + '</span>' + subLinks(x.ex) + '</td><td colspan="2"></td></tr>';
         continue;
       }
       const sres = x.calc.res, f = x.f;
       const resCell = !x.theirs ? '<span class="hint">—</span>' : x.ok ? '<span class="match-ok">✓ مطابق</span>' :
         '<span class="match-bad">✗ فرق ' + money(x.d.res) + '</span>' + (x.hint ? '<div class="hhint">' + esc(x.hint) + '</div>' : '');
-      t += '<tr class="' + (x.theirs ? (x.ok ? 'h-ok' : h.accept[x.per] ? 'h-acc' : 'h-bad') : '') + '"><td>' + lbl + (h.pdf[x.per] ? ' <span class="iss info" title="' + esc(h.pdf[x.per].name) + '">PDF</span>' : '') + '<div class="hhint">' + (x.invs.length ? int(x.nS) + ' بيع · ' + int(x.nP) + ' شراء' : 'لا توجد مستندات') + '</div></td>' +
+      t += '<tr class="' + (x.theirs ? (x.ok ? 'h-ok' : h.accept[x.per] ? 'h-acc' : 'h-bad') : '') + '"><td>' + lbl + (h.pdf[x.per] ? ' <a href="#" class="iss info" data-act="vat-hist-pdf" data-per="' + x.per + '" title="عرض ' + esc(h.pdf[x.per].name) + '">📄 PDF</a>' : '') + '<div class="hhint">' + (x.invs.length ? int(x.nS) + ' بيع · ' + int(x.nP) + ' شراء' : 'لا توجد مستندات') + '</div></td>' +
         '<td class="n">' + money(x.calc.out) + '</td><td class="n">' + money(x.calc.inp) + '</td><td class="n">' + money(sres) + '</td>' +
         '<td>' + cell(x.per, 'out', f.out) + '</td><td>' + cell(x.per, 'inp', f.inp) + '</td><td>' + cell(x.per, 'prev', f.prev, x.calc.prev ? grp(x.calc.prev) : '0') + '</td>' +
         '<td>' + cell(x.per, 'res', f.res, x.theirs ? grp(V.r2(x.theirs.due - x.theirs.prev)) : '') + '</td><td>' + cell(x.per, 'no', f.no, '', 'no') + '</td><td>' + cell(x.per, 'date', f.date, '', 'date') + '</td>' +
@@ -1620,14 +1620,19 @@
   }
   async function viewSubmitted(r) {
     if (!r.sub || !r.sub.fileChunks) return toast('لم يُحفظ ملف للإقرار المقدَّم. ارفعه من تبويب «المطابقة بعد التقديم».', true);
-    const bg = modal('الإقرار المقدَّم' + (r.sub.formNo ? ' رقم ' + r.sub.formNo : '') + (r.sub.sentDate ? ' · تاريخ التقديم ' + r.sub.sentDate : ''),
-      '<div id="sp-pages" class="sp-pages"><div class="loading">جارٍ تحميل الإقرار…</div></div>',
-      '<button type="button" class="btn" data-close>إغلاق</button>' + (S.downloads ? '<button type="button" class="btn primary" id="sp-dl">⤓ تنزيل PDF</button>' : ''), true);
+    return viewPdf('الإقرار المقدَّم' + (r.sub.formNo ? ' رقم ' + r.sub.formNo : '') + (r.sub.sentDate ? ' · تاريخ التقديم \u200E' + r.sub.sentDate + '\u200E' : ''),
+      r.sub.file || (A.fileName('إقرار ' + A.clientName(r.client) + ' ' + r.period) + '.pdf'), () => loadFile(r));
+  }
+  /* shows a PDF's pages in a window, with download and print */
+  async function viewPdf(title, name, getBytes) {
+    const bg = modal(title, '<div id="sp-pages" class="sp-pages"><div class="loading">جارٍ تحميل الإقرار…</div></div>',
+      '<button type="button" class="btn" data-close>إغلاق</button><button type="button" class="btn" id="sp-print" disabled>🖨 طباعة</button>' + (S.downloads ? '<button type="button" class="btn primary" id="sp-dl">⤓ تنزيل PDF</button>' : ''), true);
     bg.querySelector('.modal').classList.add('pdfv');
     let bytes;
-    try { bytes = await loadFile(r); } catch (e) { $('#sp-pages', bg).innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
-    const name = r.sub.file || (A.fileName('إقرار ' + A.clientName(r.client) + ' ' + r.period) + '.pdf');
+    try { bytes = await getBytes(); } catch (e) { $('#sp-pages', bg).innerHTML = '<div class="empty">' + esc((e && e.message) || 'تعذّر تحميل الملف.') + '</div>'; return; }
     const dl = $('#sp-dl', bg); if (dl) dl.addEventListener('click', () => A.saveFile(name, new Blob([bytes], { type: 'application/pdf' })));
+    const pr = $('#sp-print', bg);
+    pr.addEventListener('click', () => { const urls = Array.from(bg.querySelectorAll('#sp-pages canvas')).map(c => c.toDataURL('image/jpeg', 0.92)); if (urls.length) A.printPages(urls, false); });
     try {
       const lib = await pdfLib(), CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
       // character maps and standard fonts so the Arabic text of the portal's PDF draws correctly
@@ -1640,6 +1645,7 @@
         box.appendChild(cv);
         await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
       }
+      pr.disabled = false;
     } catch (e) { $('#sp-pages', bg).innerHTML = '<div class="empty">تعذّر عرض الملف هنا' + (S.downloads ? '، ويمكنك تنزيله.' : '.') + '</div>'; }
   }
   async function saveSub(r, sub) {
@@ -1670,15 +1676,35 @@
   }
 
   /* ---------------- summary PDF ---------------- */
-  function pdfSummary(r) {
-    const e = VS.cache.get(r.id); if (!e) return;
+  /* links of a saved return: its number and date, the submitted file (view, download, print) and the summary PDF */
+  function subLinks(r, short) {
+    const sb = r.sub || {};
+    return '<span class="sublinks">' + (sb.formNo && !short ? '<span>إقرار رقم <b class="num">' + esc(sb.formNo) + '</b>' + (sb.sentDate ? ' · <span dir="ltr">' + esc(sb.sentDate) + '</span>' : '') + '</span>' : '') +
+      (sb.fileChunks ? '<a href="#" data-act="vat-view-sub" data-id="' + r.id + '" title="عرض الإقرار المقدَّم وتحميله أو طباعته">📄 ' + (short ? esc(sb.formNo || 'الإقرار') : 'الإقرار المقدَّم') + '</a>' + (S.downloads ? '<a href="#" data-act="vat-dl-sub" data-id="' + r.id + '" title="تحميل الإقرار المقدَّم PDF">⤓</a>' : '') : short ? '<span class="num">' + esc(sb.formNo || '') + '</span>' : '') +
+      '<a href="#" data-act="vat-pdf-sum" data-id="' + r.id + '" title="ملخص الإقرار PDF للطباعة أو التحميل">🖨 ' + (short ? '' : 'ملخص PDF') + '</a></span>';
+  }
+  /* a return's invoices, loaded when they are not yet */
+  async function loadedRet(r) {
+    let e = await loadRet(r);
+    for (let i = 0; e && e.loading && i < 300; i++) { await new Promise(res => setTimeout(res, 100)); e = VS.cache.get(r.id); }
+    return e && e.loaded ? e : null;
+  }
+  async function pdfSummary(r) {
+    let e = VS.cache.get(r.id);
+    if (!e || !e.loaded) { toast('جارٍ تحميل فواتير الإقرار…'); e = await loadedRet(r); if (!e) return toast('تعذّر تحميل فواتير الإقرار.', true); }
     const c = client(r.client) || {}, calc = V.compute(e.rows, prevCredit(r));
+    // the figures of the submitted return, next to the ones from the invoices (a return kept without its invoices shows the submitted ones only)
+    const th = r.sub && r.sub.parsed && r.sub.parsed.summary, noInv = !e.rows.length;
+    const thRes = th ? (th.res != null ? th.res : V.r2((th.due || 0) - (th.prev || 0))) : 0;
+    const subTbl = th ? '<h2>' + (noInv ? 'أرقام الإقرار المقدَّم (لا توجد فواتير لهذه الفترة في البرنامج)' : 'حسب الفواتير وحسب الإقرار المقدَّم') + '</h2><table><thead><tr><th>البند</th>' + (noInv ? '' : '<th class="n">حسب الفواتير</th>') + '<th class="n">الإقرار المقدَّم</th></tr></thead><tbody>' +
+      [['ضريبة المبيعات (1)', calc.out, th.out], ['ضريبة المدخلات (2)', calc.inp, th.inp], ['الضريبة المستحقة (1)−(2)', calc.due, th.due], ['الرصيد الدائن السابق', calc.prev, th.prev], [thRes >= 0 ? 'الصافي المستحق السداد' : 'الرصيد الدائن المرحّل', Math.abs(calc.res), Math.abs(thRes)]]
+        .map(([l, a, b]) => '<tr><td>' + esc(l) + '</td>' + (noInv ? '' : '<td class="n">' + money(a) + '</td>') + '<td class="n">' + (b == null ? '—' : money(b)) + '</td></tr>').join('') + '</tbody></table>' : '';
     const box = '<div class="box"><span><b>الشركة:</b> ' + esc(c.name || '') + '</span><span><b>رقم التسجيل:</b> ' + esc(c.taxRegNo || '—') + '</span><span><b>المأمورية:</b> ' + esc(c.taxOffice || '—') + '</span><span><b>الفترة:</b> ' + esc(r.from) + ' ← ' + esc(r.to) + ' (' + esc(FREQ[r.freq]) + ')</span>' +
       (r.sub ? '<span><b>رقم الإقرار:</b> ' + esc(r.sub.formNo || '—') + '</span><span><b>تاريخ التقديم:</b> ' + esc(r.sub.sentDate || '—') + '</span>' : '') + '</div>';
     const sumBox = '<div class="summary"><div><small>ضريبة المبيعات (1)</small><b>' + money(calc.out) + '</b></div><div><small>ضريبة المدخلات (2)</small><b>' + money(calc.inp) + '</b></div><div><small>المستحقة (1)−(2)</small><b>' + money(calc.due) + '</b></div><div><small>الرصيد الدائن السابق</small><b>' + money(calc.prev) + '</b></div><div><small>' + (calc.res > 0 ? 'مستحق السداد' : 'رصيد دائن مرحّل') + '</small><b>' + money(Math.abs(calc.res)) + '</b></div></div>';
     const strip = (html) => html.replace(/<section class="card"><header><h2>/g, '<h2>').replace(/<\/h2><span class="hint">[^<]*<\/span><\/header><div class="tablewrap">/g, '</h2>').replace(/<\/table><\/div><\/section>/g, '</table>');
-    const inner = A.pdfHead('إقرار ضريبة القيمة المضافة (نموذج 10)', periodLabel(r) + (r.kind === 'amended' ? ' · معدل' : '')) + box + sumBox + '<h2>المبيعات والمشتريات حسب النوع</h2>' + brTables(V.breakdown(e.rows)) + strip(form10(calc)) +
-      '<p class="foot-note">عدد فواتير المبيعات ' + int(calc.counts.sInv + calc.counts.sOther) + ' · فواتير الشراء ' + int(calc.counts.pInv) + ' · أذون الإفراج ' + int(calc.counts.pRelease) + '</p>';
+    const inner = A.pdfHead('إقرار ضريبة القيمة المضافة (نموذج 10)', periodLabel(r) + (r.kind === 'amended' ? ' · معدل' : '')) + box + (noInv && th ? subTbl : sumBox + subTbl + '<h2>المبيعات والمشتريات حسب النوع</h2>' + brTables(V.breakdown(e.rows)) + strip(form10(calc))) +
+      (noInv ? '' : '<p class="foot-note">عدد فواتير المبيعات ' + int(calc.counts.sInv + calc.counts.sOther) + ' · فواتير الشراء ' + int(calc.counts.pInv) + ' · أذون الإفراج ' + int(calc.counts.pRelease) + '</p>');
     A.makePdf(A.fileName('إقرار قيمة مضافة ' + (c.name || '') + ' ' + r.period) + '.pdf', inner, true);
   }
 
@@ -1705,7 +1731,8 @@
     const sA = [['sAdjP', 'تسويات +'], ['sAdjM', 'تسويات −']].filter(([k]) => any(k)), pA = [['pAdjP', 'تسويات +'], ['pAdjM', 'تسويات −']].filter(([k]) => any(k));
     const sK = V.BR_S.filter(([k]) => k !== 's0' || any0).concat(sA), pK = V.BR_P.concat(pA);
     const cols = leadCols.concat(sK.map(([, l]) => col(l, 1)), [col('ض. المبيعات', 1)], anyT ? [col('ض. الجدول', 1)] : [], pK.map(([, l]) => col(l, 1)),
-      [col('ض. المدخلات', 1), col('المستحقة', 1), col('الرصيد السابق', 1), col('مستحق السداد', 1), col('رصيد دائن مرحّل', 1), col('الحالة'), col('التقديم')]);
+      [col('ض. المدخلات', 1), col('المستحقة', 1), col('الرصيد السابق', 1), col('مستحق السداد', 1), col('رصيد دائن مرحّل', 1), col('الحالة'),
+        Object.assign(col('التقديم'), { fmt: (v, row) => { const r = row.rid && retById(row.rid); return r ? (r.sub && r.sub.sentDate ? '<span class="hint" dir="ltr">' + esc(r.sub.sentDate) + '</span> ' : '') + subLinks(r, true) : esc(v == null ? '' : v); } })]);
     const groups = [['', leadCols.length], ['المبيعات', sK.length + 1 + (anyT ? 1 : 0)], ['المشتريات', pK.length + 1], ['نتيجة الإقرار', 4], ['', 2]];
     const nNum = cols.length - leadCols.length - 2, tot = new Array(nNum).fill(0);
     const rows = recs.map(x => {
@@ -1714,7 +1741,8 @@
       const sgn = (k) => /AdjM$/.test(k) && b ? -(b[k] || 0) : v(k);
       const nums = sK.map(([k]) => sgn(k)).concat([s.out || 0], anyT ? [v('sTbl')] : [], pK.map(([k]) => sgn(k)), [s.inp || 0, s.due || 0, x.prev, x.res > 0 ? x.res : '', x.res < 0 ? -x.res : '']);
       nums.forEach((n, i) => { tot[i] += Number(n) || 0; });
-      return x.lead.concat(nums, [SHORT[statusOf(x.r)], x.r.sub ? [x.r.sub.formNo, x.r.sub.sentDate].filter(Boolean).join(' · ') : '']);
+      const row = x.lead.concat(nums, [SHORT[statusOf(x.r)], x.r.sub ? [x.r.sub.formNo, x.r.sub.sentDate].filter(Boolean).join(' · ') : '']);
+      row.rid = x.r.id; return row;
     });
     // previous credit and the credit carried forward do not add up across periods
     tot[nNum - 4] = ''; tot[nNum - 1] = '';
@@ -1999,8 +2027,9 @@
         snap(r.id, (inv.x ? 'إرجاع ' : 'استبعاد ') + (inv.no || '')); inv.x = !inv.x; if (inv.x) inv.xr = 'استبعاد يدوي'; else delete inv.xr; saveSoon(r.id); return A.renderPage();
       }
       case 'vat-dl': return r ? downloadSheet(r, el.dataset.side, el.dataset.fmt) : null;
-      case 'vat-pdf-sum': return r ? pdfSummary(r) : null;
-      case 'vat-view-sub': return r ? viewSubmitted(r) : null;
+      case 'vat-pdf-sum': { const x = el.dataset.id ? retById(el.dataset.id) : r; return x ? pdfSummary(x) : null; }
+      case 'vat-view-sub': { const x = el.dataset.id ? retById(el.dataset.id) : r; return x ? viewSubmitted(x) : null; }
+      case 'vat-hist-pdf': { const f = H().pdf[el.dataset.per]; return f ? viewPdf('ملف الإقرار · ' + A.monthLabel(el.dataset.per), f.name, async () => f.bytes) : null; }
       case 'vat-dl-sub': return downloadSubmitted(retById(el.dataset.id));
       case 'vat-manual-sub': return r ? openManualSub(r) : null;
       case 'vat-clear-sub': return r ? confirmBox('حذف بيانات التقديم', 'ستُحذف بيانات الإقرار المقدَّم ونتيجة المطابقة، وتبقى الفواتير كما هي.', 'حذف', async () => {
