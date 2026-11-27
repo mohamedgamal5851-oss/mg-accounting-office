@@ -1641,9 +1641,12 @@
       const w = Math.min(900, box.clientWidth || 860);
       for (let p = 1; p <= doc.numPages; p++) {
         const page = await doc.getPage(p), v1 = page.getViewport({ scale: 1 }), scale = w / v1.width, vp = page.getViewport({ scale: scale * 2 });
-        const cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height; cv.style.width = '100%';
+        // the canvas draws left to right: inside the Arabic page it would take the page's right-to-left direction,
+        // and the browser would then reorder and reshape the PDF's Arabic letters
+        const cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height; cv.style.width = '100%'; cv.dir = 'ltr'; cv.style.direction = 'ltr';
         box.appendChild(cv);
-        await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+        const ctx = cv.getContext('2d'); try { ctx.direction = 'ltr'; } catch (e) {}
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
       }
       pr.disabled = false;
     } catch (e) { $('#sp-pages', bg).innerHTML = '<div class="empty">تعذّر عرض الملف هنا' + (S.downloads ? '، ويمكنك تنزيله.' : '.') + '</div>'; }
