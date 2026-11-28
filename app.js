@@ -1390,7 +1390,8 @@
   async function drawDocPage(doc, from, to, scale, head) {
     const o = doc.getBoundingClientRect(), W = o.width, hh = head ? head[1] - head[0] : 0;
     const cv = document.createElement('canvas'); cv.width = Math.ceil(W * scale); cv.height = Math.ceil((to - from + hh) * scale);
-    const g = cv.getContext('2d'); g.scale(scale, scale); g.fillStyle = '#fff'; g.fillRect(0, 0, W, to - from + hh);
+    // the whole canvas white first: the last pixel column (and row) is only partly covered by the page, and a transparent pixel turns black in a JPEG — that was the thin line on the right of every page
+    const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.scale(scale, scale);
     if (head) drawRegion(g, doc, o, head[0], head[1], 0);
     drawRegion(g, doc, o, from, to, hh);
     return cv;
