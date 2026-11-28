@@ -331,6 +331,95 @@
     return b;
   }
 
+  /* ---------- table goods (سلع الجدول): the portal's codes for «نوع سلع الجدول» in the sales sheet ----------
+     From the authority's list «VAT Table Goods Code» (8-2025): [new code, item, old code]. A sales line is table goods when it
+     carries table tax (lineKind 'sT'); its code goes in the sheet's third column, 0 for every other line. */
+  const TBL_CODES = [
+    ["8", "تبغ خام تمباك", "8"],
+    ["36", "تبغ خام غيره", "36"],
+    ["37", "سيجار وتبغ الغليون ومكبوس", "37"],
+    ["38", "تبغ مصنوع ..سجائر توسكاني", "38"],
+    ["39.01", "تبغ مصنوع ..السجائر ( شريحه اولي)", "39"],
+    ["39.02", "تبغ مصنوع ..السجائر ( شريحه ثانيه)", "39"],
+    ["39.03", "تبغ مصنوع ..السجائر ( شريحه ثالثه)", "39"],
+    ["40", "تبغ مصنوع .. المعسل و النشوق (مستورد)", "40"],
+    ["43", "تبغ مصنوع .. المعسل و النشوق (محلي)", "43"],
+    ["41", "تبغ مصنوع .. خلاصات وارواح", "41"],
+    ["42", "تبغ مصنوع .. غيرها", "42"],
+    ["44", "منتجات التبغ المسخن", "44"],
+    ["9.01", "بنزين 80 اوكتين ( مستورد )", "9"],
+    ["9.02", "بنزين 80 اوكتين ( محلي )", "9"],
+    ["9.03", "بنزين 90 اوكتين ( مستورد )", "9"],
+    ["9.04", "بنزين 90 اوكتين ( محلي )", "9"],
+    ["9.05", "بنزين 92 اوكتين ( مستورد )", "9"],
+    ["9.06", "بنزين 92 اوكتين ( محلي )", "9"],
+    ["9.07", "بنزين 95 اوكتين ( مستورد )", "9"],
+    ["9.08", "بنزين 95 اوكتين ( محلي )", "9"],
+    ["9.09", "كيروسين", "9"],
+    ["9.1", "سولار", "9"],
+    ["9.11", "ديزل اوبل", "9"],
+    ["9.12", "فويل اويل ( مازوت )", "9"],
+    ["10", "زيوت نباتيه", "10"],
+    ["11", "زيوت حيوانيه", "11"],
+    ["12", "مقرمشات", "12"],
+    ["13", "بطاطس مصنعه", "13"],
+    ["14.01", "اسمده", "14"],
+    ["14.02", "مبيدات", "14"],
+    ["15", "جبس", "15"],
+    ["16", "مقاولات", "16"],
+    ["17", "صابون و منظفات", "17"],
+    ["18", "نقل مكيف", "18"],
+    ["19", "الخدمات المهنيه والاستشاريه", "19"],
+    ["20", "انتاج اعلامي", "20"],
+    ["45", "السائل الالكترونى", "45"],
+    ["21", "مياه غازيه", "21"],
+    ["22", "جعه غير كحوليه", "22"],
+    ["34", "كحول ايثيلي", "34"],
+    ["35", "كحول محول", "35"],
+    ["23.01", "مشروبات مخمره وستيلا", "23"],
+    ["23.011", "مشروبات مخمره وستيلا نسبه كحول اقل من او يساوي 8%", ""],
+    ["23.012", "مشروبات مخمره وستيلا - نسبه كحول اعلي من 8% حتي 16%", ""],
+    ["23.013", "مشروبات مخمره وستيلا - نسبه كحول اعلي من 16%", ""],
+    ["23.02", "مشروبات روحيه وكحوليه محلاه", "23"],
+    ["23.021", "مشروبات روحيه وكحوليه محلاه نسبه كحول اقل من او يساوي 8%", ""],
+    ["23.022", "مشروبات روحيه وكحوليه محلاه - نسبه كحول اعلي من 8% حتي 16%", ""],
+    ["23.023", "مشروبات روحيه وكحوليه محلاه - نسبه كحول اعلي من 16%", ""],
+    ["24", "جعه كحوليه حتى 17/7/2025", "24"],
+    ["24.01", "جعه كحوليه نسبه كحول اقل من او يساوي 8%", ""],
+    ["24.02", "جعه كحوليه - نسبه كحول اعلي من 8% حتي 16%", ""],
+    ["24.03", "جعه كحوليه - نسبه كحول اعلي من 16%", ""],
+    ["25", "مستحضرات و عطور", "25"],
+    ["26.01", "تلفزيونات", "26"],
+    ["26.02", "ثلاجات", "26"],
+    ["26.03", "ديب فريزر", "26"],
+    ["27", "أجهزة تكييف", "27"],
+    ["28", "سيارات الجولف", "28"],
+    ["29", "سيارات ركوب حتى 1600", "29"],
+    ["30", "سيارات من1601 حتى 2000", "30"],
+    ["31", "سيارات اعلى من 2000 محلى", "31"],
+    ["32", "سيارات اعلى من 2000 مستورد", "32"],
+    ["33", "خدمات اتصالات", "33"],
+    ["46", "المكون التجارى المحلى (إيجار المحلات )", "46"],
+    ["47", "أعمال مقاول الباطن المسدد عنها ضريبة الجدول بواسطة المقاول العام", "47"],
+    ["48", "الكحول الايثيلى خارج الحصة (اللتر ب 60ج )", ""],
+    ["49", "عينات وهدايا", ""],
+    ["50", "فروق اسعار", ""],
+    ["51", "البترول الخام", ""]
+  ];
+  /* a guess from the item's words, only where one code fits (cigarette slices, petrol grades and cars stay for the office to pick) */
+  const TBL_WORDS = [
+    [/سولار/, '9.1'], [/كيروسين|كيروسين|كيروزين/, '9.09'], [/ديزل/, '9.11'], [/مازوت|فيول|فويل/, '9.12'],
+    [/زيو?ت نبات/, '10'], [/زيو?ت حيوان/, '11'], [/مقرمش|شيبس|chips/i, '12'], [/بطاطس/, '13'],
+    [/سماد|اسمد/, '14.01'], [/مبيد/, '14.02'], [/جبس/, '15'],
+    [/مقاول(?:ين|ه)? ?(?:ال)?باطن/, '47'], [/مقاول|مستخلص/, '16'],
+    [/صابون|منظف/, '17'], [/نقل مكيف/, '18'], [/استشار|خدمات مهني|اتعاب/, '19'], [/انتاج اعلامي/, '20'],
+    [/سائل (?:ال)?الكترون|vape/i, '45'], [/مياه غازي|مشروب(?:ات)? غازي/, '21'],
+    [/عطر|عطور|مستحضرات/, '25'], [/تلفزيون|تليفزيون/, '26.01'], [/ديب فريزر|فريزر/, '26.03'], [/ثلاج/, '26.02'],
+    [/تكييف|مكيف/, '27'], [/اتصالات/, '33'], [/ايجار (?:ال)?محل|مكون (?:ال)?تجار/, '46'],
+    [/عينات|هدايا/, '49'], [/فروق ?اسعار/, '50'], [/بترول خام|البترول الخام/, '51']
+  ];
+  function tblGuess(d) { const t = norm(d); if (!t) return ''; for (const [rx, c] of TBL_WORDS) if (rx.test(t)) return c; return ''; }
+
   /* ---------- upload sheets ---------- */
   const S_HEAD = ['نوع المستند *', 'نوع الضريبة *', 'نوع سلع الجدول *', 'رقم الفاتورة *', 'اسم العميل *', 'رقم التسجيل الضريبي للعميل *', 'رقم الملف الضريبي للعميل', 'العنوان *', 'الرقم القومي / رقم جواز السفر', 'رقم الموبيل', 'تاريخ الفاتورة *', 'إسم المنتج *', 'كود المنتج', 'نوع البيان *', 'نوع السلعة *', 'وحدة قياس المنتج', 'سعر الوحدة *', 'فئة الضريبة *', 'كمية المنتج *', 'المبلغ الإجمالي *', 'قيمة الخصم', 'المبلغ الصافي *', 'قيمة الضريبة *', 'الإجمالي *'];
   const S_CODES = ['DOC_TYP_S', 'TAX_TYP', 'TYP_SCH', 'INVNUM', 'CUST_NAME', 'CUST_REG_NO', 'CUST_FILE_NO', 'ADDRESS', 'ID', 'PHONE', 'DOC_TIN_NUM', 'PROD_NAME', 'PROD_CODE', 'STAT_TYPE_S', 'COMM_TYPE_S', 'PMU', 'UNITP', 'TAX_CAT', 'QOP', 'TAMMOUNT', 'DISC', 'NET_AMM', 'TAX_VAL', 'TOTAL'];
@@ -339,19 +428,21 @@
 
   /* فئة الضريبة: 14 or 5; left empty for zero-rated and exempt items (office rule).
      credit notes (إشعار دائن) are doc type 3 «إشعار خصم» with statement type 5 «تسويات»; amounts stay positive, discount is 0.
-     mode 'group': one row per invoice for each (type, rate) · mode 'items': one row per item */
-  function uploadRows(invoices, side, mode, defAddr) {
+     mode 'group': one row per invoice for each (type, rate, table code) · mode 'items': one row per item.
+     tcode(inv, line): the table-goods code of a sales line that carries table tax ('' when none is set) */
+  function uploadRows(invoices, side, mode, defAddr, tcode) {
+    const tcOf = (inv, l) => side === 'S' && lineKind(inv, l) === 'sT' ? String((tcode ? tcode(inv, l) : l.tc) || '') : '';
     const rows = [];
     for (const inv of invoices) {
       if (inv.side !== side || !inReturn(inv)) continue;
       let parts;
-      if (mode === 'items') parts = vatLines(inv).filter(l => Number(l.net) > 0).map(l => Object.assign({ cnt: 1 }, l));
+      if (mode === 'items') parts = vatLines(inv).filter(l => Number(l.net) > 0).map(l => Object.assign({ cnt: 1 }, l, { tc: tcOf(inv, l) }));
       else {
         const m = new Map();
         for (const l of vatLines(inv)) {
           if (!(Number(l.net) > 0)) continue;
-          const k = (l.n || '') + '|' + l.o + '|' + l.rate;
-          if (!m.has(k)) m.set(k, { d: l.d, n: l.n, o: l.o, rate: l.rate, net: 0, vat: 0, cnt: 0, code: '', unit: '' });
+          const tc = tcOf(inv, l), k = (l.n || '') + '|' + l.o + '|' + l.rate + '|' + tc;
+          if (!m.has(k)) m.set(k, { d: l.d, n: l.n, o: l.o, rate: l.rate, tc, net: 0, vat: 0, cnt: 0, code: '', unit: '' });
           const g = m.get(k); g.net += Number(l.net); g.vat += Number(l.vat); g.cnt++;
         }
         parts = Array.from(m.values()).map(g => Object.assign(g, { net: r5(g.net), vat: r5(g.vat), q: 1, p: r5(g.net), d: (String(g.d || '').slice(0, 90) + (g.cnt > 1 ? ' وأصناف أخرى' : '')).trim() }));
@@ -363,14 +454,14 @@
         // template notes: unit price and quantity accept no zero or negative values (price at least 0.01)
         if (!(p >= 0.01) || !(q > 0) || Math.abs(q * p - l.net) > 0.05) { q = 1; p = l.net; }
         const consumer = side === 'S' && inv.dt >= 5 && inv.dt !== 6;
-        rows.push([inv.dt, 1, 0, normNo(inv.no), inv.name || '', consumer ? '' : (inv.reg || ''), consumer ? '' : (inv.file || ''), inv.addr || defAddr || '', inv.nid || '', inv.phone || '', dotDate(inv.date),
+        rows.push([inv.dt, 1, l.tc ? Number(l.tc) : 0, normNo(inv.no), inv.name || '', consumer ? '' : (inv.reg || ''), consumer ? '' : (inv.file || ''), inv.addr || defAddr || '', inv.nid || '', inv.phone || '', dotDate(inv.date),
           String(l.d || (side === 'S' ? 'مبيعات' : 'مشتريات')).slice(0, 100) || '—', l.code || '', N, l.o, l.unit || '', r5(p), Number(l.rate) ? Number(l.rate) : '', r5(q), r5(l.net), 0, r5(l.net), r5(l.vat), r5(Number(l.net) + Number(l.vat))]);
       }
     }
     return rows;
   }
-  function uploadSheet(invoices, side, mode, defAddr) {
-    return { name: side === 'S' ? 'مستندات المبيعات' : 'Purchase Final', head: side === 'S' ? S_HEAD : P_HEAD, codes: side === 'S' ? S_CODES : P_CODES, rows: uploadRows(invoices, side, mode, defAddr) };
+  function uploadSheet(invoices, side, mode, defAddr, tcode) {
+    return { name: side === 'S' ? 'مستندات المبيعات' : 'Purchase Final', head: side === 'S' ? S_HEAD : P_HEAD, codes: side === 'S' ? S_CODES : P_CODES, rows: uploadRows(invoices, side, mode, defAddr, tcode) };
   }
 
   /* ---------- the submitted return (PDF from the portal) ----------
@@ -553,6 +644,6 @@
     return sc;
   }
   const API = { parseEInvoice, scoreEInvoice, normNo, ID_LIMIT, isExp, vatLines, inReturn, r2, r5, num, toLatin, isoDate, dotDate, periodBounds, quarterEnd, snapRate, defaultLine, invKey, invTotals, isServiceText, serviceWord, itemKey, readWorkbook, issues, cleanNo,
-    RATE_ROWS, IN_ROWS, compute, breakdown, lineKind, normalizeNote, BR_S, BR_P, BR_V, uploadSheet, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, parseFormFields, reconcile, VALID_REG, norm };
+    RATE_ROWS, IN_ROWS, compute, breakdown, lineKind, normalizeNote, BR_S, BR_P, BR_V, uploadSheet, TBL_CODES, tblGuess, S_HEAD, P_HEAD, S_CODES, P_CODES, parseReturnPdf, parseFormFields, reconcile, VALID_REG, norm };
   if (typeof module === 'object' && module.exports) module.exports = API; else root.OFVatCore = API;
 })(typeof window !== 'undefined' ? window : this);

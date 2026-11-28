@@ -92,7 +92,8 @@
   function summaryOf(r, rows) {
     const calc = V.compute(rows, prevCredit(r));
     const rr = Object.assign({}, r, { defAddr: partyDoc(r.client).defAddr });
-    let crit = 0; for (const inv of rows) if (V.issues(inv, rr).some(i => i[0] === 'crit')) crit++;
+    const mm = partyMap(r.client);
+    let crit = 0; for (const inv of rows) if (V.issues(inv, rr).concat(tblIssues(r.client, inv, mm)).some(i => i[0] === 'crit')) crit++;
     const outP = rows.filter(i => !i.x && i.date && (i.date < r.from || i.date > r.to)).length, prior = rows.filter(i => !i.x && i.prior).length;
     return { out: calc.out, inp: calc.inp, due: calc.due, sales: calc.salesTotal.total, inputs: calc.inputsTotal.total, crit, outP, prior, br: V.breakdown(rows),
       nS: rows.filter(i => i.side === 'S').length, nP: rows.filter(i => i.side === 'P').length };
@@ -897,6 +898,125 @@
     else A.renderPage();
   }
 
+  /* ---------------- table goods (سلع الجدول): the code in «نوع سلع الجدول» of the sales sheet ----------------
+     The list is the authority's (built in; an updated list uploaded from Excel is kept in the settings). A sales line that
+     carries table tax takes: the code set on the line, then the one kept for the item, then the company's code, then a guess
+     from the item's words (shown as a guess until it is confirmed). */
+  const tblList = () => { const s = A.settings && A.settings(); return s && Array.isArray(s.tblCodes) && s.tblCodes.length ? s.tblCodes : V.TBL_CODES; };
+  const tblName = (c) => { const x = tblList().find(t => t[0] === String(c)); return x ? x[1] : ''; };
+  const tblOpts = () => tblList().map(t => [t[0], t[0] + ' · ' + t[1]]);
+  function tblOf(cid, inv, l, mm) {
+    if (inv.side !== 'S' || V.lineKind(inv, l) !== 'sT') return null;
+    if (l.tc) return { c: String(l.tc), src: 'line' };
+    mm = mm || partyMap(cid);
+    const im = mm['I:' + nsKey(inv, l)]; if (im && im.tc) return { c: String(im.tc), src: 'item' };
+    const co = mm['T:co']; if (co && co.tc) return { c: String(co.tc), src: 'co' };
+    const g = V.tblGuess(l.d); return g ? { c: g, src: 'guess' } : { c: '', src: '' };
+  }
+  const tcodeFor = (cid) => { const mm = partyMap(cid); return (inv, l) => (tblOf(cid, inv, l, mm) || {}).c || ''; };
+  /* a sales invoice with table goods and no code: the sheet would carry 0 there */
+  function tblIssues(cid, inv, mm) {
+    if (inv.side !== 'S' || inv.x) return [];
+    const res = (inv.lines || []).map(l => tblOf(cid, inv, l, mm)).filter(Boolean);
+    if (!res.length) return [];
+    if (res.some(x => !x.c)) return [['crit', 'سلعة جدول من غير «كود سلع الجدول»: اختاره من تبويب «ملفات الرفع»']];
+    if (res.some(x => x.src === 'guess')) return [['info', 'كود سلع الجدول مقترح من وصف الصنف: راجعه في «ملفات الرفع»']];
+    return [];
+  }
+  function tblGroups(cid, invs) {
+    const m = new Map(), mm = partyMap(cid);
+    for (const inv of invs) {
+      if (inv.side !== 'S' || inv.x) continue;
+      // table tax read on the invoice only (no item carries it) is shared over its table lines by value
+      const lineTbl = (inv.lines || []).some(x => Number(x.tbl)), tNet = (inv.lines || []).filter(x => V.lineKind(inv, x) === 'sT').reduce((a, x) => a + (Number(x.net) || 0), 0);
+      for (const l of inv.lines || []) {
+        const t = tblOf(cid, inv, l, mm); if (!t) continue;
+        const tb = lineTbl ? Number(l.tbl) || 0 : tNet ? (Number(inv.tbl) || 0) * (Number(l.net) || 0) / tNet : 0;
+        const key = nsKey(inv, l), sum = key.startsWith('sum:');
+        const g = m.get(key) || { key, d: sum ? 'فواتير من غير بنود · ' + inv.name : l.d || '—', code: sum ? '' : String(l.code || ''), net: 0, tbl: 0, lines: 0, cs: new Set(), src: new Set() };
+        g.net += (inv.dt === 3 ? -1 : 1) * (Number(l.net) || 0); g.tbl += (inv.dt === 3 ? -1 : 1) * tb; g.lines++; g.cs.add(t.c); g.src.add(t.src);
+        m.set(key, g);
+      }
+    }
+    for (const g of m.values()) { g.net = V.r2(g.net); g.tbl = V.r2(g.tbl); g.c = g.cs.size === 1 ? Array.from(g.cs)[0] : 'mix'; }
+    return Array.from(m.values()).sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+  }
+  const TBL_SRC = { line: 'محدد للصنف في الإقرار ده', item: 'محفوظ للصنف', co: 'كود الشركة', guess: 'مقترح من الوصف، راجعه', '': 'ناقص' };
+  function tblCard(r, rows) {
+    const gs = tblGroups(r.client, rows); if (!gs.length) return '';
+    const ro = !A.writable() || !!r.locked, dis = ro ? ' disabled' : '', co = (partyMap(r.client)['T:co'] || {}).tc || '';
+    const miss = gs.filter(g => !g.c).length;
+    let c = '<section class="card"><header><h2>سلع الجدول</h2><span class="hint">الكود بيتكتب في عمود «نوع سلع الجدول» في شيت المبيعات، وباقي البنود 0</span><span class="grow"></span>' +
+      '<button type="button" class="btn sm" data-act="vat-tbl-list">📋 قائمة أكواد سلع الجدول</button></header><div class="body">' +
+      '<div class="toolbar"><label class="inl">كود الشركة (لأي سلعة جدول من غير كود محفوظ) <select id="tbl-co"' + dis + ' style="max-width:420px">' + options(tblOpts(), co, '— من غير —') + '</select></label></div>' +
+      (miss ? '<div class="note" style="background:var(--crit-soft)"><b style="color:var(--crit)">' + int(miss) + ' صنف سلعة جدول من غير كود.</b> اختار الكود قدامه أو حدد كود الشركة.</div>' : '') +
+      '<div class="tablewrap"><table class="vat-tbl"><thead><tr><th>الصنف</th><th>كود الصنف</th><th class="n">البنود</th><th class="n">القيمة</th><th class="n">ضريبة الجدول</th><th>كود سلع الجدول</th><th>المصدر</th></tr></thead><tbody>';
+    for (const g of gs) {
+      const src = g.src.size === 1 ? TBL_SRC[Array.from(g.src)[0]] : 'مختلف بين البنود';
+      c += '<tr><td class="wrap">' + esc(g.d) + '</td><td class="num">' + esc(g.code) + '</td><td class="n">' + int(g.lines) + '</td><td class="n">' + money(g.net) + '</td><td class="n">' + money(g.tbl) + '</td>' +
+        '<td><select data-tc="' + esc(g.key) + '"' + dis + ' style="max-width:320px">' + (g.c === 'mix' ? '<option value="" selected>مختلط · اختار كود لكل البنود</option>' + options(tblOpts(), null) : options(tblOpts(), g.c, '— اختار الكود —')) + '</select></td>' +
+        '<td class="' + (!g.c ? 'match-bad' : 'hint') + '"' + (g.c && g.src.has('guess') ? ' style="color:var(--warn)"' : '') + '>' + esc(src) + '</td></tr>';
+    }
+    return c + '</tbody></table></div></div></section>';
+  }
+  /* the code picked for an item: on its lines in this return, and kept for the item for the next returns */
+  function setTblItem(r, key, code) {
+    const e = VS.cache.get(r.id); if (!e || r.locked) return;
+    snap(r.id, 'كود سلع الجدول');
+    let name = '';
+    for (const inv of e.rows) if (inv.side === 'S') for (const l of inv.lines || []) {
+      if (nsKey(inv, l) !== key || V.lineKind(inv, l) !== 'sT') continue;
+      if (code) l.tc = code; else delete l.tc;
+      name = name || l.d || inv.name;
+    }
+    saveSoon(r.id);
+    saveParties(r.client, { ['I:' + key]: { tc: code || null, name } });
+    A.renderPage();
+  }
+  function openTblCodes() {
+    const st = { q: '' }, canSet = A.level ? A.level('setup') === 'edit' : true, s = A.settings ? A.settings() : {};
+    const bg = modal('أكواد سلع الجدول', '<div id="tc-body"></div>', (canSet && S.db ? '<button type="button" class="btn" id="tc-up">⤒ تحديث القائمة من Excel</button><input type="file" id="tc-file" accept=".xlsx,.xls" hidden>' +
+      (s && Array.isArray(s.tblCodes) && s.tblCodes.length ? '<button type="button" class="btn" id="tc-reset">رجوع للقائمة المدمجة</button>' : '') : '') + '<span style="flex:1"></span><button type="button" class="btn" data-close>إغلاق</button>', true);
+    const draw = () => {
+      const q = V.norm(st.q), list = tblList().filter(t => !q || V.norm(t[0] + ' ' + t[1] + ' ' + (t[2] || '')).includes(q));
+      $('#tc-body', bg).innerHTML = '<p class="hint" style="margin:0 0 10px">من قائمة المصلحة لأكواد سلع الجدول' + (s && s.tblCodesAt ? ' (اتحدثت ' + esc(String(s.tblCodesAt).slice(0, 10)) + ')' : ' (أغسطس 2025)') + '. الكود الجديد هو اللي بيتكتب في عمود «نوع سلع الجدول» في شيت المبيعات.</p>' +
+        '<div class="toolbar"><input id="tc-q" placeholder="ابحث بالكود أو اسم الصنف…" value="' + esc(st.q) + '" style="flex:1;max-width:360px"><span class="grow"></span><span class="hint">' + int(list.length) + ' كود</span></div>' +
+        '<div class="tablewrap" style="max-height:55vh"><table class="vat-tbl"><thead><tr><th>الكود الجديد</th><th>الصنف</th><th>الكود القديم</th></tr></thead><tbody>' +
+        (list.length ? list.map(t => '<tr><td class="num"><b>' + esc(t[0]) + '</b></td><td class="wrap">' + esc(t[1]) + '</td><td class="num">' + esc(t[2] || '') + '</td></tr>').join('') : '<tr><td colspan="3" class="empty">لا يوجد.</td></tr>') + '</tbody></table></div>';
+      const qi = $('#tc-q', bg); qi.addEventListener('input', () => { st.q = qi.value; draw(); const f = $('#tc-q', bg); f.focus(); f.setSelectionRange(f.value.length, f.value.length); });
+    };
+    draw();
+    const saveList = async (list) => { const cur = A.settings(); return write(() => S.db.doc('meta/settings').set(clean(Object.assign({}, cur, list ? { tblCodes: list, tblCodesAt: new Date().toISOString() } : { tblCodes: null, tblCodesAt: null })))); };
+    const up = $('#tc-up', bg), fi = $('#tc-file', bg);
+    if (up) up.addEventListener('click', () => fi.click());
+    if (fi) fi.addEventListener('change', () => {
+      const file = fi.files[0]; fi.value = ''; if (!file) return;
+      if (!window.XLSX) return toast('يتطلب قراءة ملفات Excel اتصالًا بالإنترنت عند فتح الصفحة.', true);
+      const rd = new FileReader();
+      rd.onload = async () => {
+        let aoa; try { const wb = XLSX.read(new Uint8Array(rd.result), { type: 'array' }); aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' }); } catch (e) { return toast('تعذّرت قراءة الملف.', true); }
+        const list = tblFromSheet(aoa);
+        if (list.length < 10) return toast('مش لاقي أعمدة «اسم المنتج» و«اكواد جديدة» في الملف.', true);
+        if (await saveList(list)) { toast('اتحدثت القائمة: ' + list.length + ' كود'); closeModal(); }
+      };
+      rd.readAsArrayBuffer(file);
+    });
+    const rs = $('#tc-reset', bg); if (rs) rs.addEventListener('click', async () => { if (await saveList(null)) { toast('رجعت القائمة المدمجة'); closeModal(); } });
+  }
+  /* the authority's sheet: a header row with «اسم المنتج» and the new codes («اكواد جديدة»), the old codes beside them */
+  function tblFromSheet(aoa) {
+    const hi = aoa.findIndex(row => row.some(v => /اسم المنتج/.test(String(v))) && row.some(v => /جديد/.test(String(v))));
+    if (hi < 0) return [];
+    const h = aoa[hi].map(v => V.norm(v)), iN = h.findIndex(v => /اسم المنتج/.test(v)), iNew = h.findIndex(v => /جديد/.test(v)), iOld = h.findIndex(v => /قديم/.test(v));
+    const str = (v) => v === '' || v == null ? '' : typeof v === 'number' ? String(v) : String(v).trim();
+    const out = [];
+    for (const row of aoa.slice(hi + 1)) {
+      const n = String(row[iN] || '').replace(/ـ/g, '').replace(/\\/g, '/').replace(/\s+/g, ' ').trim(), c = str(row[iNew]);
+      if (n && c) out.push([c, n, iOld >= 0 ? str(row[iOld]) : '']);
+    }
+    return out;
+  }
+
   /* ---------------- goods or services: where the split differs from the submitted return, and putting it right ----------------
      Sales lines are grouped by item (its portal code, else its description); lines of invoices read without their items are
      grouped by customer. Changing a group changes every such line in what is open (a return, or the old returns' sheets),
@@ -1068,7 +1188,8 @@
     if (!e.loaded) return topBar(A.clientName(r.client)) + '<div class="loading">جارٍ تحميل فواتير الإقرار…</div>';
     const rows = e.rows, c = client(r.client) || {};
     const calc = V.compute(rows, prevCredit(r));
-    const iss = new Map(rows.map(inv => [inv.id, V.issues(inv, Object.assign({}, r, { defAddr: partyDoc(r.client).defAddr }))]));
+    const tmm = partyMap(r.client);
+    const iss = new Map(rows.map(inv => [inv.id, V.issues(inv, Object.assign({}, r, { defAddr: partyDoc(r.client).defAddr })).concat(tblIssues(r.client, inv, tmm))]));
     const nCrit = (side) => rows.filter(i => i.side === side && iss.get(i.id).some(x => x[0] === 'crit')).length;
     const st = VS.undo.get(id) || [];
     const actions = (A.writable() && st.length ? '<button type="button" class="btn" data-act="vat-undo" title="' + esc(st[st.length - 1].label) + '">↶ تراجع</button>' : '') +
@@ -1232,7 +1353,7 @@
 
   function filesTab(r, rows, iss) {
     const crit = rows.filter(i => iss.get(i.id).some(x => x[0] === 'crit'));
-    const sh = (side) => V.uploadSheet(rows, side, ui.vMode, '');
+    const sh = (side) => V.uploadSheet(rows, side, ui.vMode, '', tcodeFor(r.client));
     const sS = sh('S'), sP = sh('P');
     let h = '<div class="card"><div class="body"><div class="toolbar">' +
       '<label class="inl">طريقة الصفوف <select data-ui="vMode">' + options([['group', 'صف لكل فاتورة (حسب نوع السلعة والنسبة)'], ['items', 'صف لكل صنف كما في الفاتورة']], ui.vMode) + '</select></label></div>' +
@@ -1247,7 +1368,7 @@
       for (const x of sh.rows.slice(0, 25)) c += '<tr>' + x.map((v, i) => '<td' + (typeof v === 'number' && i > 15 ? ' class="n"' : '') + '>' + esc(v) + '</td>').join('') + '</tr>';
       return c + '</tbody></table></div>' + (sh.rows.length > 25 ? '<div class="hint" style="padding:8px 16px">معاينة أول 25 صفًا من ' + int(sh.rows.length) + '.</div>' : '') + '</section>';
     };
-    return h + card('S', sS) + card('P', sP);
+    return h + tblCard(r, rows) + card('S', sS) + card('P', sP);
   }
 
   function matchTab(r, rows, calc) {
@@ -1293,6 +1414,8 @@
       if (await write(() => S.db.doc('vatReturns/' + id).update({ prevMode: 'manual', prevCredit: C.round2(prev.value) }))) { toast('تم تثبيت الرصيد الدائن السابق'); saveSoon(id); }
     });
     $$('[data-vat-set]').forEach(sel => sel.addEventListener('change', () => setInvoiceKind(r, sel.dataset.inv, sel.dataset.vatSet, sel.value)));
+    $$('[data-tc]').forEach(sel => sel.addEventListener('change', () => setTblItem(r, sel.dataset.tc, sel.value)));
+    const tco = $('#tbl-co'); if (tco) tco.addEventListener('change', () => saveParties(r.client, { 'T:co': { tc: tco.value || null, name: 'كود سلع الجدول للشركة' } }).then(() => { saveSoon(id); A.renderPage(); toast('تم حفظ كود الشركة'); }));
     $$('[data-vat-sel]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) VS.sel.add(cb.dataset.vatSel); else VS.sel.delete(cb.dataset.vatSel); A.renderPage(); }));
     $$('[data-vat-selall]').forEach(cb => cb.addEventListener('change', () => {
       const ids = $$('[data-vat-sel]').map(x => x.dataset.vatSel);
@@ -1549,7 +1672,7 @@
   /* ---------------- upload files ---------------- */
   function downloadSheet(r, side, fmt) {
     const e = VS.cache.get(r.id); if (!e) return;
-    const sh = V.uploadSheet(e.rows, side, ui.vMode, '');
+    const sh = V.uploadSheet(e.rows, side, ui.vMode, '', tcodeFor(r.client));
     if (!sh.rows.length) return toast('لا توجد صفوف للرفع.', true);
     const base = A.fileName((side === 'S' ? 'مبيعات' : 'مشتريات') + ' - ' + A.clientName(r.client) + ' - ' + r.period);
     const aoa = [sh.head, sh.codes].concat(sh.rows);
@@ -2072,8 +2195,9 @@
     let h = topBar('الموردون والعملاء', 'البيانات المحفوظة لكل مورد أو عميل: العنوان ورقم الملف والتصنيف والمصروفات، وتُطبَّق تلقائيًا عند الاستيراد التالي') + '<div class="content">';
     h += '<div class="toolbar"><select data-ui="pClient">' + options(A.clientOptions(true), ui.pClient, 'اختر الشركة…') + '</select><input type="search" placeholder="بحث…" data-ui="pQ" data-live value="' + esc(ui.pQ) + '"></div>';
     if (!ui.pClient) return h + '<div class="card"><div class="empty">اختر الشركة.</div></div></div>';
-    const d = partyDoc(ui.pClient), q = ui.pQ.trim().toLowerCase();
-    const list = Object.entries(d.map || {}).filter(([k, v]) => !q || (k + ' ' + (v.name || '') + ' ' + (v.addr || '')).toLowerCase().includes(q)).sort((a, b) => String(a[1].name || '').localeCompare(String(b[1].name || ''), 'ar'));
+    const d = partyDoc(ui.pClient), q = ui.pQ.trim().toLowerCase(), co = ((d.map || {})['T:co'] || {}).tc || '';
+    h += '<div class="toolbar"><label class="inl">كود سلع الجدول للشركة <select id="p-tbl-co"' + (A.writable() ? '' : ' disabled') + ' style="max-width:360px">' + options(tblOpts(), co, '— من غير —') + '</select></label><button type="button" class="btn sm" data-act="vat-tbl-list">📋 قائمة الأكواد</button></div>';
+    const list = Object.entries(d.map || {}).filter(([k]) => !k.startsWith('T:')).filter(([k, v]) => !q || (k + ' ' + (v.name || '') + ' ' + (v.addr || '')).toLowerCase().includes(q)).sort((a, b) => String(a[1].name || '').localeCompare(String(b[1].name || ''), 'ar'));
     h += '<div class="card"><div class="tablewrap"><table class="vat-tbl"><thead><tr><th>الجهة</th><th>الاسم</th><th>رقم التسجيل</th><th>العنوان</th><th>رقم الملف</th><th>التصنيف</th><th>الاستخدام</th></tr></thead><tbody>';
     if (!list.length) h += '<tr><td colspan="7" class="empty">لا يوجد شيء محفوظ لهذه الشركة بعد.</td></tr>';
     for (const [k, v] of list) {
@@ -2087,6 +2211,7 @@
     return h + '</tbody></table></div></div></div>';
   }
   function bindParties() {
+    const pco = $('#p-tbl-co'); if (pco) pco.addEventListener('change', () => saveParties(ui.pClient, { 'T:co': { tc: pco.value || null, name: 'كود سلع الجدول للشركة' } }).then(() => toast('تم الحفظ')));
     $$('[data-party] [data-pk]').forEach(el => el.addEventListener('change', () => {
       const k = el.closest('[data-party]').dataset.party, pk = el.dataset.pk;
       const v = pk === 'o' ? (Number(el.value) || null) : pk === 'e' ? el.value === '1' : pk === 'n' ? (el.value || null) : el.value.trim();
@@ -2110,6 +2235,7 @@
       case 'vat-hist-save': return saveHist();
       case 'vat-hist-ns': return openNSHist(el.dataset.per);
       case 'vat-ns': { const x = retById(el.dataset.id); return x ? openNSRet(x) : null; }
+      case 'vat-tbl-list': return openTblCodes();
       case 'vat-lock': { const x = retById(el.dataset.id), lock = el.dataset.v === '1'; return x && A.writable() ? write(() => S.db.doc('vatReturns/' + x.id).update({ locked: lock, unlockedAt: lock ? '' : new Date().toISOString() })).then(ok => ok && toast(lock ? 'اتقفل الإقرار' : 'الإقرار مفتوح للتعديل')) : null; }
       case 'vat-edit': { const x = retById(el.dataset.id); return x ? editRet(x) : null; }
       case 'vat-accept': {
